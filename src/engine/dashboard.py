@@ -12,8 +12,8 @@ from src.utils.logger import console
 
 class Dashboard:
     """
-    Panel visual detallado, limpio y compacto.
-    Diseñado para no truncar números en consolas estrechas.
+    Panel visual multi-cripto en tiempo real (BTC, ETH, SOL, DOGE, XRP).
+    Muestra los precios de cada activo, mercados de Polymarket y diagnóstico de señal.
     """
     def __init__(
         self,
@@ -35,7 +35,7 @@ class Dashboard:
         while self._running:
             try:
                 self._render()
-                await asyncio.sleep(5)  # Actualización cada 5 segundos
+                await asyncio.sleep(5)
             except Exception as e:
                 console.print(f"[dim red]Error en dashboard: {e}[/dim red]")
                 await asyncio.sleep(4)
@@ -46,34 +46,41 @@ class Dashboard:
     def _render(self):
         diag = self.detector.get_scan_diagnosis()
         
-        # 1. TABLA PRINCIPAL DE EXCHANGES Y ESTADO
-        table_main = Table(title="🚀 Polymarket Latency Bot - Monitor Multi-Exchange", border_style="cyan", show_header=True)
-        table_main.add_column("Exchange", style="bold white", no_wrap=True)
-        table_main.add_column("Precio BTC", style="bright_yellow", no_wrap=True)
-        table_main.add_column("Estado de Conexión", style="dim white")
+        # 1. TABLA PRINCIPAL DE CRIPTOMONEDAS MONITORIZADAS
+        table_crypto = Table(title="🚀 Polymarket Latency Bot - Radar Multi-Cripto", border_style="cyan", show_header=True)
+        table_crypto.add_column("Activo", style="bold white", no_wrap=True)
+        table_crypto.add_column("Precio Consenso", style="bright_yellow", no_wrap=True)
+        table_crypto.add_column("Variación Δ5s (%)", style="bold", no_wrap=True)
+        table_crypto.add_column("Velocidad", style="dim white", no_wrap=True)
+        table_crypto.add_column("Feeds Conectados", style="green", no_wrap=True)
 
-        now = time.time()
-        for exch, price in self.price_feed.prices.items():
-            is_live = self.price_feed.is_connected.get(exch, False) or price > 0
-            status_text = "[green]🟢 En vivo (Streaming)[/green]" if is_live else "[yellow]⏳ Sincronizando...[/yellow]"
-            price_text = f"${price:,.2f}" if price > 0 else "---"
-            table_main.add_row(exch, price_text, status_text)
+        for asset in config.monitored_assets:
+            p = self.price_feed.get_price(asset)
+            pct = self.price_feed.get_pct_delta(asset, config.momentum_window_seconds) * 100.0
+            vel = self.price_feed.get_velocity(asset)
+            pct_color = "[green]" if pct >= 0 else "[red]"
+            
+            # Contar exchanges activos para este asset
+            active_exchs = [
+                exch for exch, pr in self.price_feed.asset_prices.get(asset, {}).items()
+                if pr > 0
+            ]
+            exchs_str = ", ".join(active_exchs) if active_exchs else "Sincronizando..."
 
-        b_price = diag["btc_price"]
-        b_delta = diag["btc_delta_5s"]
-        b_vel = diag["btc_velocity"]
-        delta_color = "[green]" if b_delta >= 0 else "[red]"
+            p_str = f"${p:,.4f}" if p < 1.0 else f"${p:,.2f}"
+            table_crypto.add_row(
+                f"[bold cyan]{asset}[/bold cyan]",
+                p_str if p > 0 else "---",
+                f"{pct_color}{pct:+.2f}%[/]",
+                f"{vel:+.2f} $/s",
+                exchs_str
+            )
 
-        table_main.add_row(
-            "[bold cyan]BTC Consenso[/bold cyan]",
-            f"[bold yellow]${b_price:,.2f}[/bold yellow]",
-            f"Δ5s: {delta_color}{b_delta:+,.2f} USD[/] | Vel: {delta_color}{b_vel:+.1f} $/s[/]"
-        )
-
-        console.print(table_main)
+        console.print(table_crypto)
 
         # 2. TABLA DE MERCADOS POLYMARKET Y DESFASES
-        table_markets = Table(title="🎯 Mercados Polymarket & Análisis de Desfase", border_style="magenta", show_header=True)
+        table_markets = Table(title=f"🎯 Mercados Polymarket ({len(self.polymarket.active_markets)} Activos)", border_style="magenta", show_header=True)
+        table_markets.add_column("Activo", style="bold yellow", no_wrap=True)
         table_markets.add_column("Mercado", style="bold white")
         table_markets.add_column("Bid", style="dim white", no_wrap=True)
         table_markets.add_column("Ask", style="bright_white", no_wrap=True)
@@ -83,12 +90,13 @@ class Dashboard:
 
         evals = diag.get("market_evals", [])
         if evals:
-            for ev in evals[:5]:
+            for ev in evals[:8]:
                 diff = ev["diff"]
                 diff_str = f"+{diff*100:.1f}¢" if diff > 0 else f"{diff*100:.1f}¢"
                 signal_tag = "[bold green]🟢 ENTRAR[/bold green]" if ev["is_signal"] else "[dim white]⚪ Esperar[/dim white]"
                 table_markets.add_row(
-                    f"{ev['question'][:36]} ({ev['outcome']})",
+                    ev.get("asset", "CRYPTO"),
+                    f"{ev['question'][:32]} ({ev['outcome']})",
                     f"{ev['best_bid']:.3f}",
                     f"{ev['best_ask']:.3f}",
                     f"{ev['fair_value']:.3f}",
@@ -96,7 +104,7 @@ class Dashboard:
                     signal_tag
                 )
         else:
-            table_markets.add_row("Sincronizando libros...", "---", "---", "---", "---", "---")
+            table_markets.add_row("---", "Sincronizando libros de órdenes...", "---", "---", "---", "---", "---")
 
         console.print(table_markets)
 
@@ -111,4 +119,4 @@ class Dashboard:
             f"Trades: {self.trader.closed_trades_count} (W: {self.trader.wins_count} | L: {self.trader.losses_count} | WinRate: {winrate:.1f}%) | "
             f"Posiciones Abiertas: {len(self.trader.open_positions)}[/dim]"
         )
-        console.print(Panel(diag_msg, title="🔍 Diagnóstico de Señal", border_style="yellow"))
+        console.print(Panel(diag_msg, title="🔍 Diagnóstico de Señal Multi-Activo", border_style="yellow"))

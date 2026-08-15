@@ -25,9 +25,11 @@ services:
         value: "0.06"
       - key: POSITION_TIMEOUT_SECONDS
         value: "45"
-      - key: BTC_MOMENTUM_WINDOW_SECONDS
+      - key: MONITORED_ASSETS
+        value: "BTC,ETH,SOL,DOGE,XRP"
+      - key: MOMENTUM_WINDOW_SECONDS
         value: "5.0"
-      - key: BTC_FAST_MOVE_THRESHOLD_USD
-        value: "30.0"
+      - key: FAST_MOVE_PCT_THRESHOLD
+        value: "0.0005"
       - key: POLYMARKET_SEARCH_KEYWORDS
-        value: "Bitcoin,BTC"
+        value: "Bitcoin,BTC,Ethereum,ETH,Solana,SOL,Dogecoin,DOGE,XRP,Crypto"

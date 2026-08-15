@@ -50,15 +50,22 @@ class BotConfig:
     stop_loss_delta: float = field(default_factory=lambda: get_env_float("STOP_LOSS_DELTA", 0.06))
     position_timeout_seconds: int = field(default_factory=lambda: get_env_int("POSITION_TIMEOUT_SECONDS", 45))
 
-    # Parámetros de Análisis de BTC
-    btc_momentum_window_seconds: float = field(default_factory=lambda: get_env_float("BTC_MOMENTUM_WINDOW_SECONDS", 5.0))
-    btc_fast_move_threshold_usd: float = field(default_factory=lambda: get_env_float("BTC_FAST_MOVE_THRESHOLD_USD", 30.0))
-    polymarket_search_keywords: List[str] = field(default_factory=lambda: get_env_list("POLYMARKET_SEARCH_KEYWORDS", ["Bitcoin", "BTC"]))
+    # Activos Cripto Monitorizados (BTC, ETH, SOL, DOGE, XRP)
+    monitored_assets: List[str] = field(default_factory=lambda: get_env_list("MONITORED_ASSETS", ["BTC", "ETH", "SOL", "DOGE", "XRP"]))
+    
+    # Parámetros de Análisis de Impulso
+    momentum_window_seconds: float = field(default_factory=lambda: get_env_float("MOMENTUM_WINDOW_SECONDS", 5.0))
+    # Movimiento porcentual mínimo en la ventana para considerar un salto rápido (0.05% = 0.0005)
+    fast_move_pct_threshold: float = field(default_factory=lambda: get_env_float("FAST_MOVE_PCT_THRESHOLD", 0.0005))
+    
+    # Búsqueda de Mercados en Polymarket
+    polymarket_search_keywords: List[str] = field(
+        default_factory=lambda: get_env_list("POLYMARKET_SEARCH_KEYWORDS", ["Bitcoin", "BTC", "Ethereum", "ETH", "Solana", "SOL", "Dogecoin", "DOGE", "XRP", "Crypto"])
+    )
 
     # Endpoints de API y WebSockets
-    binance_spot_ws_url: str = "wss://stream.binance.com:9443/ws/btcusdt@trade"
-    binance_futures_ws_url: str = "wss://fstream.binance.com/ws/btcusdt@aggTrade"
     coinbase_ws_url: str = "wss://ws-feed.exchange.coinbase.com"
+    kraken_ws_url: str = "wss://ws.kraken.com"
     polymarket_gamma_url: str = "https://gamma-api.polymarket.com"
     polymarket_clob_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     polymarket_clob_http_url: str = "https://clob.polymarket.com"

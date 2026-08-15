@@ -30,6 +30,18 @@ class TokenOrderBook:
     asks: List[OrderBookLevel] = field(default_factory=list)
     last_update_ts: float = 0.0
 
+def detect_market_asset(text: str) -> str:
+    t = text.lower()
+    if "ethereum" in t or "eth " in t or "eth?" in t or "eth" in t.split():
+        return "ETH"
+    elif "solana" in t or "sol " in t or "sol?" in t or "sol" in t.split():
+        return "SOL"
+    elif "doge" in t or "dogecoin" in t:
+        return "DOGE"
+    elif "xrp" in t or "ripple" in t:
+        return "XRP"
+    return "BTC"
+
 @dataclass
 class PolymarketMarket:
     condition_id: str
@@ -37,6 +49,7 @@ class PolymarketMarket:
     end_date_iso: str
     yes_token_id: str
     no_token_id: str
+    asset: str = "BTC"
     yes_book: TokenOrderBook = field(init=False)
     no_book: TokenOrderBook = field(init=False)
     
@@ -46,18 +59,19 @@ class PolymarketMarket:
 
 class PolymarketFeed:
     """
-    Gestiona el descubrimiento de mercados de Bitcoin y la suscripción en tiempo real a los libros de órdenes (CLOB)
+    Gestiona el descubrimiento de mercados multi-cripto (BTC, ETH, SOL, DOGE, XRP)
+    y la suscripción en tiempo real a los libros de órdenes (CLOB)
     """
     def __init__(self):
         self.gamma_url = config.polymarket_gamma_url
         self.clob_ws_url = config.polymarket_clob_ws_url
         self.clob_http_url = config.polymarket_clob_http_url
-        self.active_markets: Dict[str, PolymarketMarket] = {}  # key: condition_id o yes_token_id
+        self.active_markets: Dict[str, PolymarketMarket] = {}
         self.token_to_market: Dict[str, PolymarketMarket] = {}
         self._running: bool = False
 
     async def fetch_active_btc_markets(self) -> List[PolymarketMarket]:
-        """Consulta la Gamma API para descubrir mercados activos de Bitcoin"""
+        """Consulta la Gamma API para descubrir mercados activos de cripto (BTC, ETH, SOL, etc.)"""
         discovered: List[PolymarketMarket] = []
         try:
             connector = get_aiohttp_connector()
@@ -80,7 +94,7 @@ class PolymarketFeed:
                         desc = ev.get("description", "")
                         full_text = f"{title} {desc}".lower()
                         
-                        # Comprobar si el evento menciona Bitcoin o BTC
+                        # Comprobar si el evento menciona alguna de las criptos configuradas
                         if any(k in full_text for k in keywords):
                             markets = ev.get("markets", [])
                             for m in markets:
@@ -105,22 +119,24 @@ class PolymarketFeed:
                                     question = m.get("question", title)
                                     cond_id = m.get("conditionId", m.get("id", ""))
                                     end_date = m.get("endDate", "")
+                                    asset = detect_market_asset(f"{title} {question}")
 
                                     pm_market = PolymarketMarket(
                                         condition_id=cond_id,
                                         question=question,
                                         end_date_iso=end_date,
                                         yes_token_id=yes_token,
-                                        no_token_id=no_token
+                                        no_token_id=no_token,
+                                        asset=asset
                                     )
                                     discovered.append(pm_market)
                                     self.active_markets[cond_id] = pm_market
                                     self.token_to_market[yes_token] = pm_market
                                     self.token_to_market[no_token] = pm_market
 
-            logger.info(f"✅ Se descubrieron {len(discovered)} mercados activos de Bitcoin en Polymarket.")
+            logger.info(f"✅ Se descubrieron {len(discovered)} mercados activos de Cripto ({', '.join(set(m.asset for m in discovered))}) en Polymarket.")
             for dm in discovered[:5]:
-                logger.info(f"  • {dm.question[:70]}... (YES: {dm.yes_token_id[:10]}...)")
+                logger.info(f"  • [{dm.asset}] {dm.question[:65]}... (YES: {dm.yes_token_id[:10]}...)")
         except Exception as e:
             logger.error(f"Excepción al buscar mercados en Gamma API: {e}")
         

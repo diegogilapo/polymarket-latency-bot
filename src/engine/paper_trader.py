@@ -12,6 +12,7 @@ logger = get_logger("PaperTrader")
 
 @dataclass
 class SimulatedPosition:
+    asset: str
     market_question: str
     condition_id: str
     token_id: str
@@ -23,7 +24,7 @@ class SimulatedPosition:
     size_usdc: float
     entry_timestamp: float
     timeout_timestamp: float
-    btc_price_entry: float
+    asset_price_entry: float
     discrepancy_at_entry: float
 
 class PaperTradingEngine:
@@ -47,20 +48,16 @@ class PaperTradingEngine:
 
     async def execute_signal(self, signal: ArbitrageSignal):
         """Procesa una señal de arbitraje e intenta abrir una posición simulada"""
-        # 1. Comprobar si ya tenemos posición abierta en este token
         if signal.token_id in self.open_positions:
             return
 
-        # 2. Comprobar balance disponible
         if self.balance_usdc < self.order_size:
             logger.warning(f"⚠️ Balance virtual insuficiente ({self.balance_usdc:.2f} USDC) para operar {self.order_size} USDC")
             return
 
-        # 3. Simular penalización de latencia de red (ej: 25ms de RTT a servidores de EE.UU.)
         if self.latency_ms > 0:
             await asyncio.sleep(self.latency_ms / 1000.0)
 
-        # 4. Verificar si el precio de compra (Ask) sigue siendo favorable tras la latencia
         market = self.polymarket.token_to_market.get(signal.token_id)
         if not market:
             return
@@ -68,12 +65,10 @@ class PaperTradingEngine:
         book = market.yes_book if market.yes_token_id == signal.token_id else market.no_book
         current_ask = book.best_ask
 
-        # Si el libro ya se movió y la oferta barata desapareció durante el viaje de red:
         if current_ask > signal.best_ask + 0.02:
             logger.info(f"⚡ [LATENCIA PERDIDA] La orden a {signal.best_ask:.3f} fue retirada antes de llegar. Precio actual: {current_ask:.3f}")
             return
 
-        # 5. Ejecutar compra virtual
         entry_price = max(0.01, min(0.99, current_ask))
         shares = round(self.order_size / entry_price, 4)
         self.balance_usdc -= self.order_size
@@ -84,6 +79,7 @@ class PaperTradingEngine:
         timeout_ts = now + config.position_timeout_seconds
 
         pos = SimulatedPosition(
+            asset=signal.asset,
             market_question=signal.market_question,
             condition_id=signal.condition_id,
             token_id=signal.token_id,
@@ -95,16 +91,16 @@ class PaperTradingEngine:
             size_usdc=self.order_size,
             entry_timestamp=now,
             timeout_timestamp=timeout_ts,
-            btc_price_entry=signal.btc_price,
+            asset_price_entry=signal.asset_price,
             discrepancy_at_entry=signal.discrepancy_usdc
         )
 
         self.open_positions[signal.token_id] = pos
         logger.info(
-            f"🛒 [PAPER BUY] {signal.outcome} @ {entry_price:.3f} USDC | "
+            f"🛒 [PAPER BUY] [{signal.asset}] {signal.outcome} @ {entry_price:.3f} USDC | "
             f"Shares: {shares} | Inversión: ${self.order_size:.2f} | "
             f"Desfase cazado: +{signal.discrepancy_usdc*100:.1f}¢ | "
-            f"Mercado: {signal.market_question[:50]}..."
+            f"Mercado: {signal.market_question[:45]}..."
         )
 
     def evaluate_open_positions(self):

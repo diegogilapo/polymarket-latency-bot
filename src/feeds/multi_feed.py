@@ -2,182 +2,205 @@ import asyncio
 import json
 import time
 from collections import deque
-from typing import Dict, List, Callable, Optional
+from typing import Dict, List, Callable, Optional, Any
 import websockets
 from src.config import config
 from src.utils.logger import get_logger
 
-logger = get_logger("MultiFeed")
+logger = get_logger("MultiAssetFeed")
+
+# Mapeo de símbolos por exchange
+ASSET_MAPPINGS = {
+    "Coinbase": {
+        "BTC-USD": "BTC",
+        "ETH-USD": "ETH",
+        "SOL-USD": "SOL",
+        "DOGE-USD": "DOGE",
+        "XRP-USD": "XRP"
+    },
+    "Kraken": {
+        "XBT/USD": "BTC",
+        "ETH/USD": "ETH",
+        "SOL/USD": "SOL",
+        "XDG/USD": "DOGE",
+        "XRP/USD": "XRP"
+    },
+    "Binance.US": {
+        "BTCUSDT": "BTC",
+        "ETHUSDT": "ETH",
+        "SOLUSDT": "SOL",
+        "DOGEUSDT": "DOGE",
+        "XRPUSDT": "XRP"
+    }
+}
 
 class MultiExchangePriceFeed:
     """
-    Agregador de feeds de precios de Bitcoin multi-exchange en tiempo real:
-    - Coinbase Pro (BTC-USD)
-    - Kraken (XBT/USD)
-    - Binance.US (BTC/USDT continuous ticker)
-    - Bitstamp (BTC/USD live trades & orderbook)
+    Agregador multi-activo y multi-exchange en tiempo real:
+    Soporta BTC, ETH, SOL, DOGE y XRP simultáneamente.
     """
     def __init__(self):
-        self.prices: Dict[str, float] = {
-            "Coinbase": 0.0,
-            "Kraken": 0.0,
-            "Binance.US": 0.0,
-            "Bitstamp": 0.0
+        self.assets = config.monitored_assets
+        # Estructura: self.asset_prices[asset][exchange] = price
+        self.asset_prices: Dict[str, Dict[str, float]] = {
+            a: {"Coinbase": 0.0, "Kraken": 0.0, "Binance.US": 0.0}
+            for a in self.assets
+        }
+        self.consensus_prices: Dict[str, float] = {a: 0.0 for a in self.assets}
+        self.last_update_times: Dict[str, Dict[str, float]] = {
+            a: {"Coinbase": 0.0, "Kraken": 0.0, "Binance.US": 0.0}
+            for a in self.assets
         }
         self.is_connected: Dict[str, bool] = {
             "Coinbase": False,
             "Kraken": False,
-            "Binance.US": False,
-            "Bitstamp": False
+            "Binance.US": False
         }
-        self.last_update_times: Dict[str, float] = {}
-        self.current_price: float = 0.0
-        self.active_source: str = "Iniciando..."
-        self.price_history: deque = deque(maxlen=600)
+        self.price_history: Dict[str, deque] = {a: deque(maxlen=600) for a in self.assets}
         self._running: bool = False
-        self._callbacks: List[Callable[[float, float], None]] = []
+        self._callbacks: List[Callable[[str, float, float], None]] = []
 
-    def register_callback(self, cb: Callable[[float, float], None]):
+    def register_callback(self, cb: Callable[[str, float, float], None]):
         self._callbacks.append(cb)
 
-    def record_tick(self, source: str, price: float):
-        if price <= 0:
+    def record_tick(self, asset: str, source: str, price: float):
+        if asset not in self.assets or price <= 0:
             return
         now = time.time()
-        self.prices[source] = price
-        self.last_update_times[source] = now
+        self.asset_prices[asset][source] = price
+        self.last_update_times[asset][source] = now
         self.is_connected[source] = True
-        
-        # Promedio ponderado de los feeds activos en los últimos 20 segundos
-        active_prices = [p for s, p in self.prices.items() if p > 0 and (now - self.last_update_times.get(s, 0)) < 20.0]
+
+        # Calcular consenso para este activo
+        active_prices = [
+            p for s, p in self.asset_prices[asset].items()
+            if p > 0 and (now - self.last_update_times[asset].get(s, 0)) < 15.0
+        ]
         if active_prices:
-            self.current_price = sum(active_prices) / len(active_prices)
+            self.consensus_prices[asset] = sum(active_prices) / len(active_prices)
         else:
-            self.current_price = price
-            
-        self.active_source = source
-        self.price_history.appendleft((now, self.current_price))
-        
-        vel = self.get_velocity()
+            self.consensus_prices[asset] = price
+
+        self.price_history[asset].appendleft((now, self.consensus_prices[asset]))
+
+        pct_delta = self.get_pct_delta(asset, config.momentum_window_seconds)
         for cb in self._callbacks:
             try:
-                cb(self.current_price, vel)
+                cb(asset, self.consensus_prices[asset], pct_delta)
             except Exception as e:
-                logger.debug(f"Error en callback multi-feed: {e}")
+                logger.debug(f"Error en callback multi-asset: {e}")
 
-    def get_price_delta(self, seconds_back: float = 5.0) -> float:
-        if not self.price_history or self.current_price == 0.0:
+    def get_price(self, asset: str) -> float:
+        return self.consensus_prices.get(asset, 0.0)
+
+    def get_price_delta(self, asset: str, seconds_back: float = 5.0) -> float:
+        history = self.price_history.get(asset)
+        current = self.consensus_prices.get(asset, 0.0)
+        if not history or current == 0.0:
             return 0.0
         now = time.time()
         target_ts = now - seconds_back
-        old_price = self.current_price
-        for ts, price in self.price_history:
+        old_price = current
+        for ts, p in history:
             if ts <= target_ts:
-                old_price = price
+                old_price = p
                 break
-        return self.current_price - old_price
+        return current - old_price
 
-    def get_velocity(self) -> float:
-        delta = self.get_price_delta(config.btc_momentum_window_seconds)
-        if config.btc_momentum_window_seconds > 0:
-            return delta / config.btc_momentum_window_seconds
+    def get_pct_delta(self, asset: str, seconds_back: float = 5.0) -> float:
+        current = self.consensus_prices.get(asset, 0.0)
+        if current == 0.0:
+            return 0.0
+        delta = self.get_price_delta(asset, seconds_back)
+        return delta / current
+
+    def get_velocity(self, asset: str) -> float:
+        delta = self.get_price_delta(asset, config.momentum_window_seconds)
+        if config.momentum_window_seconds > 0:
+            return delta / config.momentum_window_seconds
         return 0.0
 
     async def start(self):
         self._running = True
-        logger.info("Iniciando agregador de feeds multi-exchange (Coinbase, Kraken, Binance.US, Bitstamp)...")
+        logger.info(f"Iniciando feeds multi-activo para {', '.join(self.assets)}...")
         await asyncio.gather(
             self._feed_coinbase(),
             self._feed_kraken(),
             self._feed_binance_us(),
-            self._feed_bitstamp(),
             return_exceptions=True
         )
 
     async def stop(self):
         self._running = False
-        logger.info("Deteniendo agregador multi-exchange...")
+        logger.info("Deteniendo feeds multi-activo...")
 
     async def _feed_coinbase(self):
+        product_ids = [f"{a}-USD" for a in self.assets]
         while self._running:
             try:
                 async with websockets.connect(config.coinbase_ws_url, ping_interval=20, ping_timeout=10) as ws:
-                    sub = {"type": "subscribe", "product_ids": ["BTC-USD"], "channels": ["ticker"]}
+                    sub = {"type": "subscribe", "product_ids": product_ids, "channels": ["ticker"]}
                     await ws.send(json.dumps(sub))
                     self.is_connected["Coinbase"] = True
-                    logger.info("🟢 Conectado a Coinbase Pro WS")
+                    logger.info("🟢 Coinbase WS conectado para múltiples activos")
                     async for msg in ws:
                         if not self._running:
                             break
                         d = json.loads(msg)
                         if d.get("type") == "ticker" and "price" in d:
-                            self.record_tick("Coinbase", float(d["price"]))
+                            pid = d.get("product_id")
+                            asset = ASSET_MAPPINGS["Coinbase"].get(pid)
+                            if asset:
+                                self.record_tick(asset, "Coinbase", float(d["price"]))
             except Exception as e:
                 self.is_connected["Coinbase"] = False
-                logger.debug(f"Reconectando Coinbase en 3s: {e}")
                 await asyncio.sleep(3.0)
 
     async def _feed_kraken(self):
+        kraken_pairs = []
+        for a in self.assets:
+            if a == "BTC": kraken_pairs.append("XBT/USD")
+            elif a == "DOGE": kraken_pairs.append("XDG/USD")
+            else: kraken_pairs.append(f"{a}/USD")
+
         while self._running:
             try:
-                async with websockets.connect("wss://ws.kraken.com", ping_interval=20, ping_timeout=10) as ws:
-                    sub = {"event": "subscribe", "pair": ["XBT/USD"], "subscription": {"name": "ticker"}}
+                async with websockets.connect(config.kraken_ws_url, ping_interval=20, ping_timeout=10) as ws:
+                    sub = {"event": "subscribe", "pair": kraken_pairs, "subscription": {"name": "ticker"}}
                     await ws.send(json.dumps(sub))
                     self.is_connected["Kraken"] = True
-                    logger.info("🟢 Conectado a Kraken WS")
+                    logger.info("🟢 Kraken WS conectado para múltiples activos")
                     async for msg in ws:
                         if not self._running:
                             break
                         d = json.loads(msg)
-                        if isinstance(d, list) and len(d) > 1 and isinstance(d[1], dict) and "c" in d[1]:
-                            self.record_tick("Kraken", float(d[1]["c"][0]))
+                        if isinstance(d, list) and len(d) > 3:
+                            pair = d[3]
+                            asset = ASSET_MAPPINGS["Kraken"].get(pair)
+                            ticker_data = d[1]
+                            if asset and isinstance(ticker_data, dict) and "c" in ticker_data:
+                                self.record_tick(asset, "Kraken", float(ticker_data["c"][0]))
             except Exception as e:
                 self.is_connected["Kraken"] = False
-                logger.debug(f"Reconectando Kraken en 3s: {e}")
                 await asyncio.sleep(3.0)
 
     async def _feed_binance_us(self):
-        """Binance.US Ticker continuo de 1000ms"""
-        urls = [
-            "wss://stream.binance.us:9443/ws/btcusdt@ticker",
-            "wss://stream.binance.us:9443/ws/btcusd@ticker"
-        ]
-        while self._running:
-            for url in urls:
-                try:
-                    async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
-                        self.is_connected["Binance.US"] = True
-                        logger.info(f"🟢 Conectado a Binance.US Ticker ({url.split('/')[-1]})")
-                        async for msg in ws:
-                            if not self._running:
-                                break
-                            d = json.loads(msg)
-                            # En el stream @ticker, 'c' es el último precio de cierre
-                            if "c" in d:
-                                self.record_tick("Binance.US", float(d["c"]))
-                            elif "p" in d:
-                                self.record_tick("Binance.US", float(d["p"]))
-                except Exception as e:
-                    self.is_connected["Binance.US"] = False
-                    logger.debug(f"Reconectando Binance.US en 2s: {e}")
-                    await asyncio.sleep(2.0)
-
-    async def _feed_bitstamp(self):
-        """Bitstamp trades y orderbook live"""
+        streams = [f"{a.lower()}usdt@ticker" for a in self.assets]
+        combined_url = f"wss://stream.binance.us:9443/stream?streams={'/'.join(streams)}"
         while self._running:
             try:
-                async with websockets.connect("wss://ws.bitstamp.net", ping_interval=20, ping_timeout=10) as ws:
-                    sub_trades = {"event": "bts:subscribe", "data": {"channel": "live_trades_btcusd"}}
-                    await ws.send(json.dumps(sub_trades))
-                    self.is_connected["Bitstamp"] = True
-                    logger.info("🟢 Conectado a Bitstamp WS")
+                async with websockets.connect(combined_url, ping_interval=20, ping_timeout=10) as ws:
+                    self.is_connected["Binance.US"] = True
+                    logger.info("🟢 Binance.US WS conectado para múltiples activos")
                     async for msg in ws:
                         if not self._running:
                             break
                         d = json.loads(msg)
-                        if d.get("event") == "trade" and "data" in d:
-                            self.record_tick("Bitstamp", float(d["data"]["price"]))
+                        stream_data = d.get("data", d)
+                        s = stream_data.get("s", "")
+                        asset = ASSET_MAPPINGS["Binance.US"].get(s)
+                        if asset and "c" in stream_data:
+                            self.record_tick(asset, "Binance.US", float(stream_data["c"]))
             except Exception as e:
-                self.is_connected["Bitstamp"] = False
-                logger.debug(f"Reconectando Bitstamp en 3s: {e}")
+                self.is_connected["Binance.US"] = False
                 await asyncio.sleep(3.0)
