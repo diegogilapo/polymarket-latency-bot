@@ -31,7 +31,7 @@ logger = get_logger("Main")
 class BotApp:
     def __init__(self):
         self.binance_feed = BinanceFeed()
-        self.coinbase_feed = CoinbaseFeed()
+        self.coinbase_feed = CoinbaseFeed(on_price_update=self.binance_feed.record_tick)
         self.polymarket_feed = PolymarketFeed()
         
         self.arbitrage_detector = ArbitrageDetector(

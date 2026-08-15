@@ -54,17 +54,18 @@ class Dashboard:
         b_delta = self.binance.get_price_delta(config.btc_momentum_window_seconds)
         b_vel = self.binance.get_velocity()
         c_price = self.coinbase.current_price
+        source_name = self.binance.active_source
 
         delta_color = "[green]" if b_delta >= 0 else "[red]"
         table.add_row(
-            "BTC Binance (Futures)",
+            f"BTC Lead ({source_name})",
             f"${b_price:,.2f}",
             f"Δ5s: {delta_color}{b_delta:+,.2f} USD[/] | Vel: {delta_color}{b_vel:+.1f} $/s[/]"
         )
         table.add_row(
-            "BTC Coinbase (Spot)",
+            "BTC Coinbase (Spot US)",
             f"${c_price:,.2f}" if c_price > 0 else "Conectando...",
-            "Validación cruzada US"
+            "Feed Directo EE.UU."
         )
 
         # Polymarket Feeds
