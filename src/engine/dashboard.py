@@ -54,8 +54,7 @@ class Dashboard:
 
         now = time.time()
         for exch, price in self.price_feed.prices.items():
-            last_t = self.price_feed.last_update_times.get(exch, 0)
-            is_live = (now - last_t) < 15.0 and price > 0
+            is_live = self.price_feed.is_connected.get(exch, False) or price > 0
             status_text = "[green]🟢 En vivo (Streaming)[/green]" if is_live else "[yellow]⏳ Sincronizando...[/yellow]"
             price_text = f"${price:,.2f}" if price > 0 else "---"
             table_main.add_row(exch, price_text, status_text)
