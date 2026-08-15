@@ -12,8 +12,8 @@ from src.utils.logger import console
 
 class Dashboard:
     """
-    Panel visual detallado y transparente en tiempo real.
-    Muestra múltiples exchanges, mercados de Polymarket y diagnóstico explícito de señales de entrada.
+    Panel visual detallado, limpio y compacto.
+    Diseñado para no truncar números en consolas estrechas.
     """
     def __init__(
         self,
@@ -48,27 +48,25 @@ class Dashboard:
         
         # 1. TABLA PRINCIPAL DE EXCHANGES Y ESTADO
         table_main = Table(title="🚀 Polymarket Latency Bot - Monitor Multi-Exchange", border_style="cyan", show_header=True)
-        table_main.add_column("Exchange / Feed", style="bold white", width=22)
-        table_main.add_column("Precio BTC", style="bright_yellow", width=16)
-        table_main.add_column("Estado de Conexión / Detalle", style="dim white")
+        table_main.add_column("Exchange", style="bold white", no_wrap=True)
+        table_main.add_column("Precio BTC", style="bright_yellow", no_wrap=True)
+        table_main.add_column("Estado de Conexión", style="dim white")
 
-        # Filas por cada exchange
         now = time.time()
         for exch, price in self.price_feed.prices.items():
             last_t = self.price_feed.last_update_times.get(exch, 0)
-            is_live = (now - last_t) < 5.0 and price > 0
+            is_live = (now - last_t) < 15.0 and price > 0
             status_text = "[green]🟢 En vivo (Streaming)[/green]" if is_live else "[yellow]⏳ Sincronizando...[/yellow]"
             price_text = f"${price:,.2f}" if price > 0 else "---"
             table_main.add_row(exch, price_text, status_text)
 
-        # Precio promedio ponderado / Consenso
         b_price = diag["btc_price"]
         b_delta = diag["btc_delta_5s"]
         b_vel = diag["btc_velocity"]
         delta_color = "[green]" if b_delta >= 0 else "[red]"
 
         table_main.add_row(
-            "[bold cyan]BTC Consenso Global[/bold cyan]",
+            "[bold cyan]BTC Consenso[/bold cyan]",
             f"[bold yellow]${b_price:,.2f}[/bold yellow]",
             f"Δ5s: {delta_color}{b_delta:+,.2f} USD[/] | Vel: {delta_color}{b_vel:+.1f} $/s[/]"
         )
@@ -77,12 +75,12 @@ class Dashboard:
 
         # 2. TABLA DE MERCADOS POLYMARKET Y DESFASES
         table_markets = Table(title="🎯 Mercados Polymarket & Análisis de Desfase", border_style="magenta", show_header=True)
-        table_markets.add_column("Mercado", style="bold white", width=42)
-        table_markets.add_column("Best Bid", style="dim white", width=10)
-        table_markets.add_column("Best Ask", style="bright_white", width=10)
-        table_markets.add_column("Fair Value", style="bright_cyan", width=12)
-        table_markets.add_column("Desfase (Lag)", style="bright_yellow", width=14)
-        table_markets.add_column("Señal", width=14)
+        table_markets.add_column("Mercado", style="bold white")
+        table_markets.add_column("Bid", style="dim white", no_wrap=True)
+        table_markets.add_column("Ask", style="bright_white", no_wrap=True)
+        table_markets.add_column("Fair", style="bright_cyan", no_wrap=True)
+        table_markets.add_column("Desfase", style="bright_yellow", no_wrap=True)
+        table_markets.add_column("Señal", no_wrap=True)
 
         evals = diag.get("market_evals", [])
         if evals:
@@ -91,7 +89,7 @@ class Dashboard:
                 diff_str = f"+{diff*100:.1f}¢" if diff > 0 else f"{diff*100:.1f}¢"
                 signal_tag = "[bold green]🟢 ENTRAR[/bold green]" if ev["is_signal"] else "[dim white]⚪ Esperar[/dim white]"
                 table_markets.add_row(
-                    f"{ev['question'][:40]}... ({ev['outcome']})",
+                    f"{ev['question'][:36]} ({ev['outcome']})",
                     f"{ev['best_bid']:.3f}",
                     f"{ev['best_ask']:.3f}",
                     f"{ev['fair_value']:.3f}",

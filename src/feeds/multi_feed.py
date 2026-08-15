@@ -14,9 +14,8 @@ class MultiExchangePriceFeed:
     Agregador de feeds de precios de Bitcoin multi-exchange en tiempo real:
     - Coinbase Pro (BTC-USD)
     - Kraken (XBT/USD)
-    - Binance.US (BTC-USDT)
+    - Binance.US (BTC-USD / BTC-USDT)
     - Bitstamp (BTC-USD)
-    - Binance Global (cuando no está restringido por geobloqueo)
     """
     def __init__(self):
         self.prices: Dict[str, float] = {
@@ -42,8 +41,8 @@ class MultiExchangePriceFeed:
         self.prices[source] = price
         self.last_update_times[source] = now
         
-        # Calcular precio consenso (promedio de los feeds activos en los últimos 3 segundos)
-        active_prices = [p for s, p in self.prices.items() if p > 0 and (now - self.last_update_times.get(s, 0)) < 4.0]
+        # Promedio de feeds activos en los últimos 15 segundos
+        active_prices = [p for s, p in self.prices.items() if p > 0 and (now - self.last_update_times.get(s, 0)) < 15.0]
         if active_prices:
             self.current_price = sum(active_prices) / len(active_prices)
         else:
@@ -127,19 +126,25 @@ class MultiExchangePriceFeed:
                 await asyncio.sleep(3.0)
 
     async def _feed_binance_us(self):
+        # En Binance.US el par con mayor volumen es btcusd o btcusdt
+        urls = [
+            "wss://stream.binance.us:9443/ws/btcusd@trade",
+            "wss://stream.binance.us:9443/ws/btcusdt@trade"
+        ]
         while self._running:
-            try:
-                async with websockets.connect("wss://stream.binance.us:9443/ws/btcusdt@trade", ping_interval=20, ping_timeout=10) as ws:
-                    logger.info("🟢 Conectado a Binance.US WS")
-                    async for msg in ws:
-                        if not self._running:
-                            break
-                        d = json.loads(msg)
-                        if "p" in d:
-                            self.record_tick("Binance.US", float(d["p"]))
-            except Exception as e:
-                logger.debug(f"Reconectando Binance.US en 3s: {e}")
-                await asyncio.sleep(3.0)
+            for url in urls:
+                try:
+                    async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
+                        logger.info(f"🟢 Conectado a Binance.US WS ({url.split('/')[-1]})")
+                        async for msg in ws:
+                            if not self._running:
+                                break
+                            d = json.loads(msg)
+                            if "p" in d:
+                                self.record_tick("Binance.US", float(d["p"]))
+                except Exception as e:
+                    logger.debug(f"Reconectando Binance.US en 3s: {e}")
+                    await asyncio.sleep(2.0)
 
     async def _feed_bitstamp(self):
         while self._running:
