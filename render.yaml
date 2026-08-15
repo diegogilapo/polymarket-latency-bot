@@ -1,0 +1,32 @@
+services:
+  - type: worker
+    name: polymarket-latency-bot
+    env: python
+    region: ohio
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    autoDeploy: true
+    envVars:
+      - key: SIMULATION_MODE
+        value: "True"
+      - key: SIMULATION_INITIAL_BALANCE
+        value: "1000.0"
+      - key: SIMULATED_NETWORK_LATENCY_MS
+        value: "25"
+      - key: MIN_PRICE_DISCREPANCY
+        value: "0.04"
+      - key: ORDER_SIZE_USDC
+        value: "50.0"
+      - key: TAKE_PROFIT_DELTA
+        value: "0.08"
+      - key: STOP_LOSS_DELTA
+        value: "0.06"
+      - key: POSITION_TIMEOUT_SECONDS
+        value: "45"
+      - key: BTC_MOMENTUM_WINDOW_SECONDS
+        value: "5.0"
+      - key: BTC_FAST_MOVE_THRESHOLD_USD
+        value: "30.0"
+      - key: POLYMARKET_SEARCH_KEYWORDS
+        value: "Bitcoin,BTC"
