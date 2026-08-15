@@ -24,6 +24,7 @@ from src.feeds.polymarket_feed import PolymarketFeed
 from src.engine.arbitrage_detector import ArbitrageDetector
 from src.engine.paper_trader import PaperTradingEngine
 from src.engine.dashboard import Dashboard
+from src.engine.web_server import BotWebServer
 
 logger = get_logger("Main")
 
@@ -45,6 +46,13 @@ class BotApp:
         )
         
         self.dashboard = Dashboard(
+            binance=self.binance_feed,
+            coinbase=self.coinbase_feed,
+            polymarket=self.polymarket_feed,
+            trader=self.paper_trader
+        )
+
+        self.web_server = BotWebServer(
             binance=self.binance_feed,
             coinbase=self.coinbase_feed,
             polymarket=self.polymarket_feed,
@@ -90,7 +98,8 @@ class BotApp:
             asyncio.create_task(self.coinbase_feed.start()),
             asyncio.create_task(self.polymarket_feed.start()),
             asyncio.create_task(self._strategy_loop()),
-            asyncio.create_task(self.dashboard.start())
+            asyncio.create_task(self.dashboard.start()),
+            asyncio.create_task(self.web_server.start())
         ]
 
         try:
@@ -105,6 +114,7 @@ class BotApp:
         await self.coinbase_feed.stop()
         await self.polymarket_feed.stop()
         await self.dashboard.stop()
+        await self.web_server.stop()
 
 def handle_exit(loop, app):
     logger.info("Recibida señal de terminación (SIGINT/SIGTERM). Apagando bot...")
