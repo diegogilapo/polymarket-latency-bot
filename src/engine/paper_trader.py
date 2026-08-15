@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 from src.config import config
 from src.engine.arbitrage_detector import ArbitrageSignal
 from src.feeds.polymarket_feed import PolymarketFeed
-from src.feeds.binance_feed import BinanceFeed
+from src.feeds.multi_feed import MultiExchangePriceFeed
 from src.utils.logger import get_logger, trade_logger
 
 logger = get_logger("PaperTrader")
@@ -31,9 +31,9 @@ class PaperTradingEngine:
     Motor de simulación de trading en tiempo real contra los libros reales de Polymarket.
     Simula ejecución, latencia de red, deslizamiento y salidas automáticas.
     """
-    def __init__(self, polymarket_feed: PolymarketFeed, binance_feed: BinanceFeed):
+    def __init__(self, polymarket_feed: PolymarketFeed, price_feed: MultiExchangePriceFeed):
         self.polymarket = polymarket_feed
-        self.binance = binance_feed
+        self.price_feed = price_feed
         self.balance_usdc: float = config.simulation_initial_balance
         self.initial_balance: float = config.simulation_initial_balance
         self.order_size: float = config.order_size_usdc
@@ -161,7 +161,7 @@ class PaperTradingEngine:
             color_tag = "[red]"
             status_symbol = "🔴 LOSS"
 
-        current_btc = self.binance.current_price
+        current_btc = self.price_feed.current_price
 
         # Registrar en CSV
         trade_logger.log_trade({

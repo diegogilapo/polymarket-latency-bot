@@ -4,102 +4,114 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.layout import Layout
 from src.config import config
-from src.feeds.binance_feed import BinanceFeed
-from src.feeds.coinbase_feed import CoinbaseFeed
+from src.feeds.multi_feed import MultiExchangePriceFeed
 from src.feeds.polymarket_feed import PolymarketFeed
 from src.engine.paper_trader import PaperTradingEngine
+from src.engine.arbitrage_detector import ArbitrageDetector
 from src.utils.logger import console
 
 class Dashboard:
     """
-    Panel visual en tiempo real para monitorear el estado del bot, precios y balance.
+    Panel visual detallado y transparente en tiempo real.
+    Muestra múltiples exchanges, mercados de Polymarket y diagnóstico explícito de señales de entrada.
     """
     def __init__(
         self,
-        binance: BinanceFeed,
-        coinbase: CoinbaseFeed,
+        price_feed: MultiExchangePriceFeed,
         polymarket: PolymarketFeed,
-        trader: PaperTradingEngine
+        trader: PaperTradingEngine,
+        detector: ArbitrageDetector
     ):
-        self.binance = binance
-        self.coinbase = coinbase
+        self.price_feed = price_feed
         self.polymarket = polymarket
         self.trader = trader
+        self.detector = detector
         self._running: bool = False
 
     async def start(self):
         self._running = True
-        # Esperar 5s a que los feeds se conecten
-        await asyncio.sleep(5)
+        await asyncio.sleep(4)
         
         while self._running:
             try:
                 self._render()
-                await asyncio.sleep(6)  # Actualización cada 6 segundos
+                await asyncio.sleep(5)  # Actualización cada 5 segundos
             except Exception as e:
                 console.print(f"[dim red]Error en dashboard: {e}[/dim red]")
-                await asyncio.sleep(5)
+                await asyncio.sleep(4)
 
     async def stop(self):
         self._running = False
 
     def _render(self):
-        table = Table(title="🚀 Polymarket Latency Arbitrage Bot - Status Monitor", border_style="cyan", show_header=True)
-        table.add_column("Métrica / Feed", style="bold white", width=26)
-        table.add_column("Valor Actual", style="bright_yellow", width=22)
-        table.add_column("Detalles / Estado", style="dim white")
+        diag = self.detector.get_scan_diagnosis()
+        
+        # 1. TABLA PRINCIPAL DE EXCHANGES Y ESTADO
+        table_main = Table(title="🚀 Polymarket Latency Bot - Monitor Multi-Exchange", border_style="cyan", show_header=True)
+        table_main.add_column("Exchange / Feed", style="bold white", width=22)
+        table_main.add_column("Precio BTC", style="bright_yellow", width=16)
+        table_main.add_column("Estado de Conexión / Detalle", style="dim white")
 
-        # Precios BTC
-        b_price = self.binance.current_price
-        b_delta = self.binance.get_price_delta(config.btc_momentum_window_seconds)
-        b_vel = self.binance.get_velocity()
-        c_price = self.coinbase.current_price
-        source_name = self.binance.active_source
+        # Filas por cada exchange
+        now = time.time()
+        for exch, price in self.price_feed.prices.items():
+            last_t = self.price_feed.last_update_times.get(exch, 0)
+            is_live = (now - last_t) < 5.0 and price > 0
+            status_text = "[green]🟢 En vivo (Streaming)[/green]" if is_live else "[yellow]⏳ Sincronizando...[/yellow]"
+            price_text = f"${price:,.2f}" if price > 0 else "---"
+            table_main.add_row(exch, price_text, status_text)
 
+        # Precio promedio ponderado / Consenso
+        b_price = diag["btc_price"]
+        b_delta = diag["btc_delta_5s"]
+        b_vel = diag["btc_velocity"]
         delta_color = "[green]" if b_delta >= 0 else "[red]"
-        table.add_row(
-            f"BTC Lead ({source_name})",
-            f"${b_price:,.2f}",
+
+        table_main.add_row(
+            "[bold cyan]BTC Consenso Global[/bold cyan]",
+            f"[bold yellow]${b_price:,.2f}[/bold yellow]",
             f"Δ5s: {delta_color}{b_delta:+,.2f} USD[/] | Vel: {delta_color}{b_vel:+.1f} $/s[/]"
         )
-        table.add_row(
-            "BTC Coinbase (Spot US)",
-            f"${c_price:,.2f}" if c_price > 0 else "Conectando...",
-            "Feed Directo EE.UU."
-        )
 
-        # Polymarket Feeds
-        market_count = len(self.polymarket.active_markets)
-        table.add_row(
-            "Mercados Polymarket",
-            f"{market_count} activos",
-            f"Libros sincronizados por WS + REST"
-        )
+        console.print(table_main)
 
-        # Paper Trading Metrics
+        # 2. TABLA DE MERCADOS POLYMARKET Y DESFASES
+        table_markets = Table(title="🎯 Mercados Polymarket & Análisis de Desfase", border_style="magenta", show_header=True)
+        table_markets.add_column("Mercado", style="bold white", width=42)
+        table_markets.add_column("Best Bid", style="dim white", width=10)
+        table_markets.add_column("Best Ask", style="bright_white", width=10)
+        table_markets.add_column("Fair Value", style="bright_cyan", width=12)
+        table_markets.add_column("Desfase (Lag)", style="bright_yellow", width=14)
+        table_markets.add_column("Señal", width=14)
+
+        evals = diag.get("market_evals", [])
+        if evals:
+            for ev in evals[:5]:
+                diff = ev["diff"]
+                diff_str = f"+{diff*100:.1f}¢" if diff > 0 else f"{diff*100:.1f}¢"
+                signal_tag = "[bold green]🟢 ENTRAR[/bold green]" if ev["is_signal"] else "[dim white]⚪ Esperar[/dim white]"
+                table_markets.add_row(
+                    f"{ev['question'][:40]}... ({ev['outcome']})",
+                    f"{ev['best_bid']:.3f}",
+                    f"{ev['best_ask']:.3f}",
+                    f"{ev['fair_value']:.3f}",
+                    diff_str,
+                    signal_tag
+                )
+        else:
+            table_markets.add_row("Sincronizando libros...", "---", "---", "---", "---", "---")
+
+        console.print(table_markets)
+
+        # 3. PANEL DE DIAGNÓSTICO Y VEREDICTO DE ENTRADA
         winrate = (self.trader.wins_count / self.trader.closed_trades_count * 100) if self.trader.closed_trades_count > 0 else 0.0
         pnl = self.trader.total_pnl_usdc
         pnl_color = "[bold green]" if pnl >= 0 else "[bold red]"
         
-        table.add_row(
-            "Modo de Operación",
-            "DEMO (Paper Trading)" if config.simulation_mode else "[bold red]REAL MONEY[/bold red]",
-            f"Latencia Simulada: {config.simulated_network_latency_ms}ms"
+        diag_msg = (
+            f"[bold]Veredicto de Revisión:[/] {diag['verdict']}\n"
+            f"[dim]Balance Virtual: ${self.trader.balance_usdc:,.2f} USDC | PnL Acumulado: {pnl_color}{pnl:+,.2f} USDC[/] | "
+            f"Trades: {self.trader.closed_trades_count} (W: {self.trader.wins_count} | L: {self.trader.losses_count} | WinRate: {winrate:.1f}%) | "
+            f"Posiciones Abiertas: {len(self.trader.open_positions)}[/dim]"
         )
-        table.add_row(
-            "Balance Virtual",
-            f"${self.trader.balance_usdc:,.2f} USDC",
-            f"Inicial: ${self.trader.initial_balance:,.2f} USDC"
-        )
-        table.add_row(
-            "PnL Acumulado",
-            f"{pnl_color}{pnl:+,.2f} USDC[/]",
-            f"Operaciones: {self.trader.closed_trades_count} (W: {self.trader.wins_count} | L: {self.trader.losses_count}) | WinRate: {winrate:.1f}%"
-        )
-        table.add_row(
-            "Posiciones Abiertas",
-            f"{len(self.trader.open_positions)} activas",
-            f"TP: +{config.take_profit_delta*100:.0f}¢ | SL: -{config.stop_loss_delta*100:.0f}¢ | Timeout: {config.position_timeout_seconds}s"
-        )
-
-        console.print(table)
+        console.print(Panel(diag_msg, title="🔍 Diagnóstico de Señal", border_style="yellow"))

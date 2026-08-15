@@ -18,8 +18,7 @@ from src.utils.dns_resolver import setup_smart_dns
 # Configurar DNS inteligente con fallback DoH
 setup_smart_dns()
 
-from src.feeds.binance_feed import BinanceFeed
-from src.feeds.coinbase_feed import CoinbaseFeed
+from src.feeds.multi_feed import MultiExchangePriceFeed
 from src.feeds.polymarket_feed import PolymarketFeed
 from src.engine.arbitrage_detector import ArbitrageDetector
 from src.engine.paper_trader import PaperTradingEngine
@@ -30,33 +29,31 @@ logger = get_logger("Main")
 
 class BotApp:
     def __init__(self):
-        self.binance_feed = BinanceFeed()
-        self.coinbase_feed = CoinbaseFeed(on_price_update=self.binance_feed.record_tick)
+        self.price_feed = MultiExchangePriceFeed()
         self.polymarket_feed = PolymarketFeed()
         
         self.arbitrage_detector = ArbitrageDetector(
-            binance=self.binance_feed,
-            coinbase=self.coinbase_feed,
+            price_feed=self.price_feed,
             polymarket=self.polymarket_feed
         )
         
         self.paper_trader = PaperTradingEngine(
             polymarket_feed=self.polymarket_feed,
-            binance_feed=self.binance_feed
+            price_feed=self.price_feed
         )
         
         self.dashboard = Dashboard(
-            binance=self.binance_feed,
-            coinbase=self.coinbase_feed,
+            price_feed=self.price_feed,
             polymarket=self.polymarket_feed,
-            trader=self.paper_trader
+            trader=self.paper_trader,
+            detector=self.arbitrage_detector
         )
 
         self.web_server = BotWebServer(
-            binance=self.binance_feed,
-            coinbase=self.coinbase_feed,
+            price_feed=self.price_feed,
             polymarket=self.polymarket_feed,
-            trader=self.paper_trader
+            trader=self.paper_trader,
+            detector=self.arbitrage_detector
         )
         
         self._running = False
@@ -94,8 +91,7 @@ class BotApp:
         )
 
         tasks = [
-            asyncio.create_task(self.binance_feed.start()),
-            asyncio.create_task(self.coinbase_feed.start()),
+            asyncio.create_task(self.price_feed.start()),
             asyncio.create_task(self.polymarket_feed.start()),
             asyncio.create_task(self._strategy_loop()),
             asyncio.create_task(self.dashboard.start()),
@@ -110,8 +106,7 @@ class BotApp:
     async def stop(self):
         logger.info("Cerrando feeds y guardando estado...")
         self._running = False
-        await self.binance_feed.stop()
-        await self.coinbase_feed.stop()
+        await self.price_feed.stop()
         await self.polymarket_feed.stop()
         await self.dashboard.stop()
         await self.web_server.stop()
@@ -123,13 +118,11 @@ def handle_exit(loop, app):
 async def main():
     app = BotApp()
     
-    # Manejadores de señal para apagado limpio
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, lambda: handle_exit(loop, app))
         except NotImplementedError:
-            # En Windows add_signal_handler puede no estar disponible
             pass
 
     try:
