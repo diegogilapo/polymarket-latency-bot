@@ -2,7 +2,7 @@ services:
   - type: web
     name: polymarket-latency-bot
     env: python
-    region: ohio
+    region: virginia
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
