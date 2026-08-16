@@ -106,20 +106,16 @@ class PaperTradingEngine:
     def evaluate_open_positions(self):
         """Revisa posiciones abiertas contra el estado actual del libro para ejecutar TP, SL o Timeout"""
         now = time.time()
-        tokens_to_close = []
-
         for token_id, pos in list(self.open_positions.items()):
             market = self.polymarket.token_to_market.get(token_id)
             if not market:
                 continue
 
             book = market.yes_book if market.yes_token_id == token_id else market.no_book
-            # Para vender nuestras acciones, salimos golpeando el Best Bid actual
             current_bid = book.best_bid
 
-            # Si no hay Bids en el libro temporalmente, usar un estimado conservador basado en el midpoint
             if current_bid <= 0.0:
-                current_bid = max(0.01, book.best_ask - 0.05)
+                current_bid = max(0.01, book.best_ask - 0.04)
 
             exit_reason = None
             if current_bid >= pos.target_tp_price:
@@ -130,12 +126,9 @@ class PaperTradingEngine:
                 exit_reason = "TIMEOUT_EQUILIBRIUM"
 
             if exit_reason:
+                # Eliminar de posiciones abiertas primero para evitar ejecuciones repetidas
+                self.open_positions.pop(token_id, None)
                 self._close_position(pos, current_bid, exit_reason, now)
-                tokens_to_close.append(token_id)
-
-        for tid in tokens_to_close:
-            if tid in self.open_positions:
-                del self.open_positions[tid]
 
     def _close_position(self, pos: SimulatedPosition, exit_price: float, reason: str, exit_time: float):
         """Cierra la posición virtual, calcula PnL y guarda en CSV"""
@@ -157,31 +150,36 @@ class PaperTradingEngine:
             color_tag = "[red]"
             status_symbol = "🔴 LOSS"
 
-        current_btc = self.price_feed.current_price
+        asset = getattr(pos, "asset", "BTC")
+        current_asset_price = self.price_feed.get_price(asset)
+        asset_price_entry = getattr(pos, "asset_price_entry", 0.0)
 
         # Registrar en CSV
-        trade_logger.log_trade({
-            "timestamp_entry": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(pos.entry_timestamp)),
-            "timestamp_exit": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(exit_time)),
-            "market_question": pos.market_question,
-            "token_id": pos.token_id,
-            "outcome": pos.outcome,
-            "side": "BUY_SELL",
-            "entry_price": f"{pos.entry_price:.4f}",
-            "exit_price": f"{exit_price:.4f}",
-            "shares_count": f"{pos.shares_count:.2f}",
-            "size_usdc": f"{pos.size_usdc:.2f}",
-            "pnl_usdc": f"{pnl:.2f}",
-            "pnl_percentage": f"{pnl_pct:.2f}%",
-            "exit_reason": reason,
-            "lag_duration_ms": lag_duration_ms,
-            "btc_price_entry": f"{pos.btc_price_entry:.2f}",
-            "btc_price_exit": f"{current_btc:.2f}",
-            "simulated_balance_after": f"{self.balance_usdc:.2f}"
-        })
+        try:
+            trade_logger.log_trade({
+                "timestamp_entry": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(pos.entry_timestamp)),
+                "timestamp_exit": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(exit_time)),
+                "market_question": pos.market_question,
+                "token_id": pos.token_id,
+                "outcome": pos.outcome,
+                "side": "BUY_SELL",
+                "entry_price": f"{pos.entry_price:.4f}",
+                "exit_price": f"{exit_price:.4f}",
+                "shares_count": f"{pos.shares_count:.2f}",
+                "size_usdc": f"{pos.size_usdc:.2f}",
+                "pnl_usdc": f"{pnl:.2f}",
+                "pnl_percentage": f"{pnl_pct:.2f}%",
+                "exit_reason": reason,
+                "lag_duration_ms": lag_duration_ms,
+                "btc_price_entry": f"{asset_price_entry:.2f}",
+                "btc_price_exit": f"{current_asset_price:.2f}",
+                "simulated_balance_after": f"{self.balance_usdc:.2f}"
+            })
+        except Exception as e:
+            logger.debug(f"Error escribiendo trade en CSV: {e}")
 
         logger.info(
-            f"{color_tag}{status_symbol} [{reason}][/] {pos.outcome} | "
+            f"{color_tag}{status_symbol} [{reason}][/] [{asset}] {pos.outcome} | "
             f"Entrada: {pos.entry_price:.3f} ➔ Salida: {exit_price:.3f} | "
             f"PnL: {pnl:+.2f} USDC ({pnl_pct:+.1f}%) | "
             f"Tiempo activo: {lag_duration_ms/1000:.1f}s | "

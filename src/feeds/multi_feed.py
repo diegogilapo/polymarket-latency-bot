@@ -60,6 +60,10 @@ class MultiExchangePriceFeed:
         self._running: bool = False
         self._callbacks: List[Callable[[str, float, float], None]] = []
 
+    @property
+    def current_price(self) -> float:
+        return self.get_price("BTC")
+
     def register_callback(self, cb: Callable[[str, float, float], None]):
         self._callbacks.append(cb)
 

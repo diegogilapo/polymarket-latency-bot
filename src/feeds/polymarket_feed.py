@@ -75,70 +75,83 @@ class PolymarketFeed:
         self._running: bool = False
 
     async def fetch_active_crypto_markets(self) -> List[PolymarketMarket]:
-        """Consulta la Gamma API para descubrir mercados activos estrictamente cripto"""
+        """Consulta la Gamma API por múltiples endpoints para descubrir todos los mercados activos de cripto"""
         discovered: List[PolymarketMarket] = []
+        seen_conditions = set()
+
+        urls = [
+            f"{self.gamma_url}/events?closed=false&limit=100&order=volume24hr&ascending=false",
+            f"{self.gamma_url}/events?tag_slug=crypto&closed=false&limit=100",
+            f"{self.gamma_url}/events?closed=false&limit=100&search=bitcoin",
+            f"{self.gamma_url}/events?closed=false&limit=100&search=ethereum",
+            f"{self.gamma_url}/events?closed=false&limit=100&search=solana",
+            f"{self.gamma_url}/events?closed=false&limit=100&search=price"
+        ]
+
         try:
             connector = get_aiohttp_connector()
             async with aiohttp.ClientSession(connector=connector) as session:
-                url = f"{self.gamma_url}/events"
-                params = {
-                    "active": "true",
-                    "closed": "false",
-                    "limit": 150
-                }
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status != 200:
-                        logger.error(f"Error consultando Gamma API: status {resp.status}")
-                        return []
-                    events = await resp.json()
-                    
-                    for ev in events:
-                        title = ev.get("title", "")
-                        desc = ev.get("description", "")
-                        markets = ev.get("markets", [])
-                        
-                        for m in markets:
-                            if not m.get("active") or m.get("closed"):
+                for url in urls:
+                    try:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                            if resp.status != 200:
                                 continue
-                            
-                            question = m.get("question", title)
-                            full_text = f"{title} {question} {desc}"
-                            asset = detect_market_asset(question) or detect_market_asset(full_text)
-                            
-                            # Si no es un mercado de cripto identificado, ignorar por completo
-                            if not asset:
+                            events = await resp.json()
+                            if not isinstance(events, list):
                                 continue
-                            
-                            clob_tokens = m.get("clobTokenIds")
-                            if isinstance(clob_tokens, str):
-                                try:
-                                    clob_tokens = json.loads(clob_tokens)
-                                except Exception:
-                                    clob_tokens = []
-                            
-                            if not clob_tokens or len(clob_tokens) < 2:
-                                tokens = m.get("tokens", [])
-                                if len(tokens) >= 2:
-                                    clob_tokens = [tokens[0].get("token_id"), tokens[1].get("token_id")]
-                            
-                            if clob_tokens and len(clob_tokens) >= 2:
-                                yes_token = str(clob_tokens[0])
-                                no_token = str(clob_tokens[1])
-                                cond_id = m.get("conditionId", m.get("id", ""))
-                                end_date = m.get("endDate", "")
 
-                                pm_market = PolymarketMarket(
-                                    condition_id=cond_id,
-                                    question=question,
-                                    end_date_iso=end_date,
-                                    yes_token_id=yes_token,
-                                    no_token_id=no_token,
-                                    asset=asset
-                                )
-                                discovered.append(pm_market)
-                                self.active_markets[cond_id] = pm_market
-                                self.token_to_market[yes_token] = pm_market
-                                self.token_to_market[no_token] = pm_market
+                            for ev in events:
+                                title = ev.get("title", "")
+                                desc = ev.get("description", "")
+                                markets = ev.get("markets", [])
+
+                                for m in markets:
+                                    if not m.get("active") or m.get("closed"):
+                                        continue
+
+                                    cond_id = m.get("conditionId", m.get("id", ""))
+                                    if not cond_id or cond_id in seen_conditions:
+                                        continue
+
+                                    question = m.get("question", title)
+                                    full_text = f"{title} {question} {desc}"
+                                    asset = detect_market_asset(question) or detect_market_asset(full_text)
+
+                                    if not asset:
+                                        continue
+
+                                    clob_tokens = m.get("clobTokenIds")
+                                    if isinstance(clob_tokens, str):
+                                        try:
+                                            clob_tokens = json.loads(clob_tokens)
+                                        except Exception:
+                                            clob_tokens = []
+
+                                    if not clob_tokens or len(clob_tokens) < 2:
+                                        tokens = m.get("tokens", [])
+                                        if len(tokens) >= 2:
+                                            clob_tokens = [tokens[0].get("token_id"), tokens[1].get("token_id")]
+
+                                    if clob_tokens and len(clob_tokens) >= 2:
+                                        yes_token = str(clob_tokens[0])
+                                        no_token = str(clob_tokens[1])
+                                        end_date = m.get("endDate", "")
+
+                                        pm_market = PolymarketMarket(
+                                            condition_id=cond_id,
+                                            question=question,
+                                            end_date_iso=end_date,
+                                            yes_token_id=yes_token,
+                                            no_token_id=no_token,
+                                            asset=asset
+                                        )
+                                        discovered.append(pm_market)
+                                        seen_conditions.add(cond_id)
+                                        self.active_markets[cond_id] = pm_market
+                                        self.token_to_market[yes_token] = pm_market
+                                        self.token_to_market[no_token] = pm_market
+                    except Exception as err:
+                        logger.debug(f"Error consultando endpoint de mercado {url}: {err}")
 
             unique_assets = set(m.asset for m in discovered)
             logger.info(f"✅ Se descubrieron {len(discovered)} mercados legítimos de Cripto ({', '.join(unique_assets)}) en Polymarket.")
