@@ -8,13 +8,9 @@ logger = get_logger("FairValueModel")
 
 class FairValueModel:
     """
-    Modelo matemático cuantitativo para calcular el Fair Value (probabilidad justa)
-    de contratos binarios de Polymarket ante movimientos rápidos en los feeds spot.
+    Modelo matemático cuantitativo para estimar el precio teórico justo (Fair Value)
+    de las acciones YES/NO de Polymarket en la Zona Activa de Probabilidad.
     """
-    
-    @staticmethod
-    def norm_cdf(x: float) -> float:
-        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
     @staticmethod
     def calculate_fair_probability(
@@ -22,40 +18,39 @@ class FairValueModel:
         asset_price: float,
         pct_delta_5s: float,
         asset_velocity: float,
-        is_bullish_market: bool = True,
-        time_to_expiry_hours: float = 24.0
+        is_bullish_market: bool = True
     ) -> float:
         """
-        Calcula la probabilidad justa implícita considerando:
-        1. Delta de opción binaria (sensibilidad no lineal).
-        2. Magnitud y velocidad del impulso en los exchanges.
-        3. Dirección correlacionada del contrato (Bullish YES / Bearish NO).
+        Calcula el valor justo implícito en tiempo real.
+        - En contratos At-The-Money / 50-50 (P ~ 0.50), la sensibilidad Gamma es máxima.
+        - Un movimiento spot del +0.05% a +0.10% genera un desplazamiento de +2.5¢ a +5.0¢.
+        - NO clampa a mínimos artificiales para evitar desfases falsos en libros ilíquidos.
         """
-        if current_poly_mid <= 0.001 or current_poly_mid >= 0.999:
-            current_poly_mid = 0.50
+        if current_poly_mid <= 0.0001:
+            return 0.0001
+        if current_poly_mid >= 0.9999:
+            return 0.9999
 
         direction = 1.0 if is_bullish_market else -1.0
         
-        # Sensibilidad adaptativa: Mayor cuando el precio de Polymarket está en la zona activa (0.20 - 0.80)
-        # La derivada dN(d2)/dS es máxima cuando el contrato está At-The-Money (P ~ 0.50)
-        gamma_weight = 4.0 * current_poly_mid * (1.0 - current_poly_mid)  # Máximo = 1.0 en 0.50
+        # Ponderación Gamma de opción binaria: máxima en P = 0.50 (4 * 0.5 * 0.5 = 1.0)
+        gamma_factor = 4.0 * current_poly_mid * (1.0 - current_poly_mid)
         
-        # Coeficiente de respuesta: un movimiento de +0.10% spot genera un salto de ~+4¢ a +6¢ en P(YES)
-        multiplier = 45.0 * gamma_weight
+        # Sensibilidad proporcional al impulso spot en 5s
+        # 0.001 (0.10% spot) * 40.0 * 1.0 = +0.040 (+4.0 centavos de variación)
+        prob_shift = pct_delta_5s * 40.0 * gamma_factor * direction
         
-        prob_adjustment = (pct_delta_5s * multiplier * direction)
+        # Limitar desplazamiento máximo por vela para evitar sobreajuste
+        prob_shift = max(min(prob_shift, 0.20), -0.20)
         
-        # Limitar ajuste máximo por impulso individual a +/- 0.25 para evitar sobre-reacción
-        prob_adjustment = max(min(prob_adjustment, 0.25), -0.25)
-        
-        fair_value = current_poly_mid + prob_adjustment
-        return max(0.01, min(0.99, round(fair_value, 4)))
+        fair_value = current_poly_mid + prob_shift
+        return round(max(0.001, min(0.999, fair_value)), 4)
 
     @staticmethod
     def is_market_bullish(question: str) -> bool:
         q_lower = question.lower()
-        bullish_keywords = ["reach", "hit", "above", "up", "exceed", "higher", "ath", "surpass", ">", "at least", "gain", "win"]
-        bearish_keywords = ["drop", "below", "down", "fall", "under", "crash", "<", "less than", "lose"]
+        bullish_keywords = ["up", "reach", "hit", "above", "exceed", "higher", "ath", "surpass", ">", "at least", "gain", "win"]
+        bearish_keywords = ["down", "drop", "below", "fall", "under", "crash", "<", "less than", "lose", "dip"]
 
         for b in bearish_keywords:
             if b in q_lower:

@@ -79,7 +79,12 @@ class BotWebServer:
         # Filas de mercados
         market_rows = ""
         evals = diag.get("market_evals", [])
-        for ev in evals[:10]:
+        valid_evals = [ev for ev in evals if ev.get("is_valid_book")]
+        if not valid_evals:
+            valid_evals = evals
+        valid_evals.sort(key=lambda x: -x["diff"])
+
+        for ev in valid_evals[:12]:
             diff = ev["diff"]
             diff_color = "#10b981" if diff >= config.min_price_discrepancy else "#94a3b8"
             signal_badge = '<span class="badge" style="background:#065f46;color:#a7f3d0;">ENTRAR</span>' if ev["is_signal"] else '<span style="color:#64748b;">Esperar</span>'

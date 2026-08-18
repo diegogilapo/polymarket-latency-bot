@@ -89,8 +89,14 @@ class Dashboard:
         table_markets.add_column("Señal", no_wrap=True)
 
         evals = diag.get("market_evals", [])
-        if evals:
-            for ev in evals[:8]:
+        valid_evals = [ev for ev in evals if ev.get("is_valid_book")]
+        if not valid_evals:
+            valid_evals = evals
+
+        valid_evals.sort(key=lambda x: -x["diff"])
+
+        if valid_evals:
+            for ev in valid_evals[:8]:
                 diff = ev["diff"]
                 diff_str = f"+{diff*100:.1f}¢" if diff > 0 else f"{diff*100:.1f}¢"
                 signal_tag = "[bold green]🟢 ENTRAR[/bold green]" if ev["is_signal"] else "[dim white]⚪ Esperar[/dim white]"

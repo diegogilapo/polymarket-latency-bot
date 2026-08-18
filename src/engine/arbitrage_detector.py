@@ -29,7 +29,7 @@ class ArbitrageSignal:
 class ArbitrageDetector:
     """
     Analiza en tiempo real los feeds multi-exchange y los libros de Polymarket
-    para cualquier activo soportado (BTC, ETH, SOL, DOGE, XRP).
+    para cualquier activo soportado (BTC, ETH, SOL, DOGE, XRP) en la Zona Activa.
     """
     def __init__(self, price_feed: MultiExchangePriceFeed, polymarket: PolymarketFeed):
         self.price_feed = price_feed
@@ -59,9 +59,13 @@ class ArbitrageDetector:
 
             is_bullish = FairValueModel.is_market_bullish(market.question)
             
-            # Evaluar YES
+            # --- EVALUAR TOKEN YES ---
             yes_book = market.yes_book
-            mid_yes = (yes_book.best_bid + yes_book.best_ask) / 2.0 if yes_book.best_bid > 0 else yes_book.best_ask
+            if yes_book.best_bid > 0 and yes_book.best_ask < 0.98:
+                mid_yes = (yes_book.best_bid + yes_book.best_ask) / 2.0
+            else:
+                mid_yes = yes_book.best_ask if yes_book.best_ask < 0.98 else market.initial_prob
+
             fair_yes = FairValueModel.calculate_fair_probability(
                 current_poly_mid=mid_yes,
                 asset_price=asset_price,
@@ -71,9 +75,13 @@ class ArbitrageDetector:
             )
             diff_yes = fair_yes - yes_book.best_ask
 
-            # Evaluar NO
+            # --- EVALUAR TOKEN NO ---
             no_book = market.no_book
-            mid_no = (no_book.best_bid + no_book.best_ask) / 2.0 if no_book.best_bid > 0 else no_book.best_ask
+            if no_book.best_bid > 0 and no_book.best_ask < 0.98:
+                mid_no = (no_book.best_bid + no_book.best_ask) / 2.0
+            else:
+                mid_no = no_book.best_ask if no_book.best_ask < 0.98 else (1.0 - market.initial_prob)
+
             fair_no = FairValueModel.calculate_fair_probability(
                 current_poly_mid=mid_no,
                 asset_price=asset_price,
@@ -83,13 +91,17 @@ class ArbitrageDetector:
             )
             diff_no = fair_no - no_book.best_ask
 
+            # Seleccionar el lado con mayor desfase
             top_diff = max(diff_yes, diff_no)
             outcome = "YES" if diff_yes >= diff_no else "NO"
             best_ask = yes_book.best_ask if outcome == "YES" else no_book.best_ask
             best_bid = yes_book.best_bid if outcome == "YES" else no_book.best_bid
             fair_val = fair_yes if outcome == "YES" else fair_no
 
-            if top_diff > max_diff:
+            # Filtro de calidad de libro: spread <= 6 centavos y precio entre 0.05 y 0.95
+            is_valid_book = (0.05 <= best_ask <= 0.95) and (best_bid > 0) and ((best_ask - best_bid) <= 0.06)
+
+            if is_valid_book and top_diff > max_diff:
                 max_diff = top_diff
                 best_candidate = f"[{asset}] {market.question[:28]}... ({outcome})"
 
@@ -103,11 +115,9 @@ class ArbitrageDetector:
                 "diff": top_diff,
                 "asset_price": asset_price,
                 "pct_delta": pct_delta,
-                "is_signal": top_diff >= self.min_discrepancy and has_momentum
+                "is_valid_book": is_valid_book,
+                "is_signal": top_diff >= self.min_discrepancy and has_momentum and is_valid_book
             })
-
-        btc_p = self.price_feed.get_price("BTC")
-        btc_pct = self.price_feed.get_pct_delta("BTC", config.momentum_window_seconds)
 
         verdict = "⏳ ESPERANDO IMPULSO EN CRIPTO"
         if not any_momentum:
@@ -118,8 +128,6 @@ class ArbitrageDetector:
             verdict = f"⚡ ¡SEÑAL DETECTADA! Desfase cazable de +{max_diff*100:.1f}¢ en {best_candidate}"
 
         return {
-            "btc_price": btc_p,
-            "btc_pct_delta": btc_pct,
             "consensus_prices": self.price_feed.consensus_prices,
             "max_diff": max_diff,
             "verdict": verdict,
@@ -127,7 +135,7 @@ class ArbitrageDetector:
         }
 
     def check_opportunities(self) -> List[ArbitrageSignal]:
-        """Evalúa todos los mercados activos multi-cripto y genera señales ante desfases"""
+        """Evalúa todos los mercados activos multi-cripto y genera señales ante desfases reales"""
         signals: List[ArbitrageSignal] = []
         now = time.time()
 
@@ -141,74 +149,81 @@ class ArbitrageDetector:
             vel = self.price_feed.get_velocity(asset)
             has_momentum = abs(pct_delta) >= self.fast_move_pct_threshold
 
+            if not has_momentum:
+                continue
+
             is_bullish = FairValueModel.is_market_bullish(market.question)
             
             # --- EVALUAR TOKEN YES ---
             yes_book = market.yes_book
-            if yes_book.best_ask < 0.99 and yes_book.best_ask > 0.01:
-                mid_yes = (yes_book.best_bid + yes_book.best_ask) / 2.0 if yes_book.best_bid > 0 else yes_book.best_ask
-                fair_yes = FairValueModel.calculate_fair_probability(
-                    current_poly_mid=mid_yes,
-                    asset_price=asset_price,
-                    pct_delta_5s=pct_delta,
-                    asset_velocity=vel,
-                    is_bullish_market=is_bullish
-                )
+            if 0.05 <= yes_book.best_ask <= 0.95 and yes_book.best_bid > 0:
+                spread = yes_book.best_ask - yes_book.best_bid
+                if spread <= 0.06:
+                    mid_yes = (yes_book.best_bid + yes_book.best_ask) / 2.0
+                    fair_yes = FairValueModel.calculate_fair_probability(
+                        current_poly_mid=mid_yes,
+                        asset_price=asset_price,
+                        pct_delta_5s=pct_delta,
+                        asset_velocity=vel,
+                        is_bullish_market=is_bullish
+                    )
 
-                discrepancy_yes = fair_yes - yes_book.best_ask
-                if discrepancy_yes >= self.min_discrepancy and has_momentum:
-                    if now - self.last_signal_time.get(market.yes_token_id, 0) > 5.0:
-                        self.last_signal_time[market.yes_token_id] = now
-                        liquidity = yes_book.best_ask_size * yes_book.best_ask
-                        signals.append(ArbitrageSignal(
-                            asset=asset,
-                            market_question=market.question,
-                            condition_id=market.condition_id,
-                            token_id=market.yes_token_id,
-                            outcome="YES",
-                            side="BUY",
-                            best_ask=yes_book.best_ask,
-                            best_bid=yes_book.best_bid,
-                            fair_value=fair_yes,
-                            discrepancy_usdc=round(discrepancy_yes, 4),
-                            available_liquidity_usdc=round(liquidity, 2),
-                            asset_price=asset_price,
-                            pct_delta_5s=pct_delta,
-                            timestamp=now
-                        ))
+                    discrepancy_yes = fair_yes - yes_book.best_ask
+                    if discrepancy_yes >= self.min_discrepancy:
+                        if now - self.last_signal_time.get(market.yes_token_id, 0) > 8.0:
+                            self.last_signal_time[market.yes_token_id] = now
+                            liquidity = yes_book.best_ask_size * yes_book.best_ask
+                            signals.append(ArbitrageSignal(
+                                asset=asset,
+                                market_question=market.question,
+                                condition_id=market.condition_id,
+                                token_id=market.yes_token_id,
+                                outcome="YES",
+                                side="BUY",
+                                best_ask=yes_book.best_ask,
+                                best_bid=yes_book.best_bid,
+                                fair_value=fair_yes,
+                                discrepancy_usdc=round(discrepancy_yes, 4),
+                                available_liquidity_usdc=round(liquidity, 2),
+                                asset_price=asset_price,
+                                pct_delta_5s=pct_delta,
+                                timestamp=now
+                            ))
 
             # --- EVALUAR TOKEN NO ---
             no_book = market.no_book
-            if no_book.best_ask < 0.99 and no_book.best_ask > 0.01:
-                mid_no = (no_book.best_bid + no_book.best_ask) / 2.0 if no_book.best_bid > 0 else no_book.best_ask
-                fair_no = FairValueModel.calculate_fair_probability(
-                    current_poly_mid=mid_no,
-                    asset_price=asset_price,
-                    pct_delta_5s=pct_delta,
-                    asset_velocity=vel,
-                    is_bullish_market=not is_bullish
-                )
+            if 0.05 <= no_book.best_ask <= 0.95 and no_book.best_bid > 0:
+                spread = no_book.best_ask - no_book.best_bid
+                if spread <= 0.06:
+                    mid_no = (no_book.best_bid + no_book.best_ask) / 2.0
+                    fair_no = FairValueModel.calculate_fair_probability(
+                        current_poly_mid=mid_no,
+                        asset_price=asset_price,
+                        pct_delta_5s=pct_delta,
+                        asset_velocity=vel,
+                        is_bullish_market=not is_bullish
+                    )
 
-                discrepancy_no = fair_no - no_book.best_ask
-                if discrepancy_no >= self.min_discrepancy and has_momentum:
-                    if now - self.last_signal_time.get(market.no_token_id, 0) > 5.0:
-                        self.last_signal_time[market.no_token_id] = now
-                        liquidity = no_book.best_ask_size * no_book.best_ask
-                        signals.append(ArbitrageSignal(
-                            asset=asset,
-                            market_question=market.question,
-                            condition_id=market.condition_id,
-                            token_id=market.no_token_id,
-                            outcome="NO",
-                            side="BUY",
-                            best_ask=no_book.best_ask,
-                            best_bid=no_book.best_bid,
-                            fair_value=fair_no,
-                            discrepancy_usdc=round(discrepancy_no, 4),
-                            available_liquidity_usdc=round(liquidity, 2),
-                            asset_price=asset_price,
-                            pct_delta_5s=pct_delta,
-                            timestamp=now
-                        ))
+                    discrepancy_no = fair_no - no_book.best_ask
+                    if discrepancy_no >= self.min_discrepancy:
+                        if now - self.last_signal_time.get(market.no_token_id, 0) > 8.0:
+                            self.last_signal_time[market.no_token_id] = now
+                            liquidity = no_book.best_ask_size * no_book.best_ask
+                            signals.append(ArbitrageSignal(
+                                asset=asset,
+                                market_question=market.question,
+                                condition_id=market.condition_id,
+                                token_id=market.no_token_id,
+                                outcome="NO",
+                                side="BUY",
+                                best_ask=no_book.best_ask,
+                                best_bid=no_book.best_bid,
+                                fair_value=fair_no,
+                                discrepancy_usdc=round(discrepancy_no, 4),
+                                available_liquidity_usdc=round(liquidity, 2),
+                                asset_price=asset_price,
+                                pct_delta_5s=pct_delta,
+                                timestamp=now
+                            ))
 
         return signals
