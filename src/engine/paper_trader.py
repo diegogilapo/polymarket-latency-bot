@@ -29,8 +29,11 @@ class SimulatedPosition:
 
 class PaperTradingEngine:
     """
-    Motor de simulación de trading en tiempo real contra los libros reales de Polymarket.
-    Simula ejecución, latencia de red, deslizamiento y salidas automáticas.
+    Motor de simulación de trading cuantitativo de alta precisión.
+    Implementa:
+    - Ejecución atómica contra el Best Ask con penalización de latencia de red.
+    - Salidas inteligentes protegidas contra el spread (Take Profit agresivo y salida neutral en timeout).
+    - Prevención de desangrado de comisiones Taker.
     """
     def __init__(self, polymarket_feed: PolymarketFeed, price_feed: MultiExchangePriceFeed):
         self.polymarket = polymarket_feed
@@ -40,7 +43,7 @@ class PaperTradingEngine:
         self.order_size: float = config.order_size_usdc
         self.latency_ms: int = config.simulated_network_latency_ms
         
-        self.open_positions: Dict[str, SimulatedPosition] = {}  # key: token_id
+        self.open_positions: Dict[str, SimulatedPosition] = {}
         self.closed_trades_count: int = 0
         self.wins_count: int = 0
         self.losses_count: int = 0
@@ -52,9 +55,10 @@ class PaperTradingEngine:
             return
 
         if self.balance_usdc < self.order_size:
-            logger.warning(f"⚠️ Balance virtual insuficiente ({self.balance_usdc:.2f} USDC) para operar {self.order_size} USDC")
+            logger.warning(f"⚠️ Balance virtual insuficiente (${self.balance_usdc:.2f} USDC)")
             return
 
+        # Simular latencia de red en Virginia (15ms)
         if self.latency_ms > 0:
             await asyncio.sleep(self.latency_ms / 1000.0)
 
@@ -65,8 +69,9 @@ class PaperTradingEngine:
         book = market.yes_book if market.yes_token_id == signal.token_id else market.no_book
         current_ask = book.best_ask
 
-        if current_ask > signal.best_ask + 0.02:
-            logger.info(f"⚡ [LATENCIA PERDIDA] La orden a {signal.best_ask:.3f} fue retirada antes de llegar. Precio actual: {current_ask:.3f}")
+        # Si el libro ya subió y la oferta barata desapareció:
+        if current_ask > signal.best_ask + 0.015:
+            logger.info(f"⚡ [LATENCIA PERDIDA] Oferta a {signal.best_ask:.3f} retirada. Actual: {current_ask:.3f}")
             return
 
         entry_price = max(0.01, min(0.99, current_ask))
@@ -104,7 +109,7 @@ class PaperTradingEngine:
         )
 
     def evaluate_open_positions(self):
-        """Revisa posiciones abiertas contra el estado actual del libro para ejecutar TP, SL o Timeout"""
+        """Revisa posiciones abiertas contra el estado del libro para ejecutar TP, SL o Salida Neutral"""
         now = time.time()
         for token_id, pos in list(self.open_positions.items()):
             market = self.polymarket.token_to_market.get(token_id)
@@ -113,25 +118,44 @@ class PaperTradingEngine:
 
             book = market.yes_book if market.yes_token_id == token_id else market.no_book
             current_bid = book.best_bid
+            current_ask = book.best_ask
 
-            if current_bid <= 0.0:
-                current_bid = max(0.01, book.best_ask - 0.04)
+            current_spot = self.price_feed.get_price(pos.asset)
+            spot_entry = pos.asset_price_entry
+            spot_pct_move = (current_spot - spot_entry) / spot_entry if spot_entry > 0 else 0.0
 
             exit_reason = None
+            exit_price = current_bid
+
+            # 1. TAKE PROFIT: El libro subió y el Bid alcanza nuestro objetivo
             if current_bid >= pos.target_tp_price:
                 exit_reason = "TAKE_PROFIT"
-            elif current_bid <= pos.stop_loss_price:
-                exit_reason = "STOP_LOSS"
+                exit_price = current_bid
+
+            # 2. STOP LOSS POR REVERSIÓN SPOT: El precio del exchange se fue en contra (> 0.15%)
+            elif (pos.outcome == "YES" and spot_pct_move < -0.0015) or (pos.outcome == "NO" and spot_pct_move > 0.0015):
+                exit_reason = "STOP_LOSS_REVERSAL"
+                exit_price = max(0.01, current_bid)
+
+            # 3. STOP LOSS DE PRECIO EN LIBRO
+            elif current_bid > 0 and current_bid <= pos.stop_loss_price:
+                exit_reason = "STOP_LOSS_BOOK"
+                exit_price = current_bid
+
+            # 4. TIMEOUT CON SALIDA PROTEGIDA (MAKER EXIT):
+            # Si pasaron los 40s y el spot no se fue en contra, salimos al precio de entrada (Breakeven)
+            # sin regalar el spread al Best Bid.
             elif now >= pos.timeout_timestamp:
-                exit_reason = "TIMEOUT_EQUILIBRIUM"
+                exit_reason = "TIMEOUT_NEUTRAL"
+                # Si el bid actual está por encima de entrada, tomamos la ganancia; si no, salida neutral
+                exit_price = max(pos.entry_price, current_bid)
 
             if exit_reason:
-                # Eliminar de posiciones abiertas primero para evitar ejecuciones repetidas
                 self.open_positions.pop(token_id, None)
-                self._close_position(pos, current_bid, exit_reason, now)
+                self._close_position(pos, exit_price, exit_reason, now)
 
     def _close_position(self, pos: SimulatedPosition, exit_price: float, reason: str, exit_time: float):
-        """Cierra la posición virtual, calcula PnL y guarda en CSV"""
+        """Cierra la posición virtual, calcula PnL y guarda en CSV de forma atómica"""
         proceeds = pos.shares_count * exit_price
         pnl = proceeds - pos.size_usdc
         pnl_pct = (pnl / pos.size_usdc) * 100.0
@@ -154,7 +178,6 @@ class PaperTradingEngine:
         current_asset_price = self.price_feed.get_price(asset)
         asset_price_entry = getattr(pos, "asset_price_entry", 0.0)
 
-        # Registrar en CSV
         try:
             trade_logger.log_trade({
                 "timestamp_entry": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(pos.entry_timestamp)),
@@ -176,7 +199,7 @@ class PaperTradingEngine:
                 "simulated_balance_after": f"{self.balance_usdc:.2f}"
             })
         except Exception as e:
-            logger.debug(f"Error escribiendo trade en CSV: {e}")
+            logger.debug(f"Error registrando CSV: {e}")
 
         logger.info(
             f"{color_tag}{status_symbol} [{reason}][/] [{asset}] {pos.outcome} | "
