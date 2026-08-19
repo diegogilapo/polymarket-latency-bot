@@ -76,37 +76,35 @@ class BotWebServer:
                 <div class="card-sub" style="color: {pct_col}; font-weight:600;">Δ5s: {pct:+.2f}%</div>
             </div>"""
 
-        # Filas de mercados
+        # Filas de mercados de paridad
         market_rows = ""
         evals = diag.get("market_evals", [])
-        valid_evals = [ev for ev in evals if ev.get("is_valid_book")]
-        if not valid_evals:
-            valid_evals = evals
-        valid_evals.sort(key=lambda x: -x["diff"])
-
-        for ev in valid_evals[:12]:
-            diff = ev["diff"]
-            diff_color = "#10b981" if diff >= config.min_price_discrepancy else "#94a3b8"
-            signal_badge = '<span class="badge" style="background:#065f46;color:#a7f3d0;">ENTRAR</span>' if ev["is_signal"] else '<span style="color:#64748b;">Esperar</span>'
+        for ev in evals[:15]:
+            cost = ev["combined_cost"]
+            margin = ev["guaranteed_margin"]
+            margin_pct = ev["margin_pct"]
+            cost_color = "#10b981" if cost < 1.00 else "#e2e8f0"
+            margin_color = "#10b981" if margin > 0 else "#94a3b8"
+            signal_badge = '<span class="badge" style="background:#065f46;color:#a7f3d0;">EJECUTAR ARB</span>' if ev["is_signal"] else '<span style="color:#64748b;">Esperar</span>'
             market_rows += f"""<tr>
                 <td><span class="badge" style="background:#312e81;color:#c7d2fe;">{ev.get('asset', 'CRYPTO')}</span></td>
-                <td><strong>{ev['question'][:55]}...</strong> <span style="color:#38bdf8;">({ev['outcome']})</span></td>
-                <td>{ev['best_bid']:.3f}</td>
-                <td>{ev['best_ask']:.3f}</td>
-                <td style="color:#38bdf8;font-weight:600;">{ev['fair_value']:.3f}</td>
-                <td style="color:{diff_color};font-weight:600;">{diff*100:+.1f}¢</td>
+                <td><strong>{ev['question'][:60]}...</strong></td>
+                <td style="color:#38bdf8;">${ev['yes_ask']:.3f}</td>
+                <td style="color:#38bdf8;">${ev['no_ask']:.3f}</td>
+                <td style="color:{cost_color};font-weight:700;">${cost:.3f}</td>
+                <td style="color:{margin_color};font-weight:600;">{margin*100:+.1f}¢ ({margin_pct:+.1f}%)</td>
                 <td>{signal_badge}</td>
             </tr>"""
 
         if not market_rows:
-            market_rows = "<tr><td colspan='7' style='text-align:center;'>Sincronizando libros de órdenes...</td></tr>"
+            market_rows = "<tr><td colspan='7' style='text-align:center;'>Sincronizando libros de órdenes de Polymarket...</td></tr>"
 
         html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Polymarket Latency Bot - Multi-Crypto Radar</title>
+    <title>Polymarket Structural Arbitrage - 100% Risk-Free</title>
     <meta http-equiv="refresh" content="5">
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}

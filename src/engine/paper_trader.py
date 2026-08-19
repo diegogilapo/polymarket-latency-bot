@@ -8,32 +8,28 @@ from src.feeds.polymarket_feed import PolymarketFeed
 from src.feeds.multi_feed import MultiExchangePriceFeed
 from src.utils.logger import get_logger, trade_logger
 
-logger = get_logger("PaperTrader")
+logger = get_logger("ParityPaperTrader")
 
 @dataclass
-class SimulatedPosition:
+class ParityTradeRecord:
     asset: str
     market_question: str
     condition_id: str
-    token_id: str
-    outcome: str
-    entry_price: float
-    target_tp_price: float
-    stop_loss_price: float
+    yes_ask: float
+    no_ask: float
+    combined_cost: float
     shares_count: float
-    size_usdc: float
-    entry_timestamp: float
-    timeout_timestamp: float
-    asset_price_entry: float
-    discrepancy_at_entry: float
+    total_cost_usdc: float
+    redemption_value_usdc: float
+    net_profit_usdc: float
+    profit_pct: float
+    timestamp: float
 
 class PaperTradingEngine:
     """
-    Motor de simulación de trading cuantitativo de alta precisión.
-    Implementa:
-    - Ejecución atómica contra el Best Ask con penalización de latencia de red.
-    - Salidas inteligentes protegidas contra el spread (Take Profit agresivo y salida neutral en timeout).
-    - Prevención de desangrado de comisiones Taker.
+    Motor de Ejecución de Arbitraje Estructural de Paridad Binaria (100% Risk-Free).
+    Compra simultáneamente acciones YES + NO cuando la suma de costos es menor a 1.00 USDC,
+    garantizando un rendimiento neto positivo inmediato con 0 riesgo direccional.
     """
     def __init__(self, polymarket_feed: PolymarketFeed, price_feed: MultiExchangePriceFeed):
         self.polymarket = polymarket_feed
@@ -43,172 +39,84 @@ class PaperTradingEngine:
         self.order_size: float = config.order_size_usdc
         self.latency_ms: int = config.simulated_network_latency_ms
         
-        self.open_positions: Dict[str, SimulatedPosition] = {}
+        self.open_positions: Dict[str, Any] = {}
         self.closed_trades_count: int = 0
         self.wins_count: int = 0
         self.losses_count: int = 0
         self.total_pnl_usdc: float = 0.0
 
     async def execute_signal(self, signal: ArbitrageSignal):
-        """Procesa una señal de arbitraje e intenta abrir una posición simulada"""
-        if signal.token_id in self.open_positions:
-            return
-
+        """Ejecuta la compra dual YES + NO y canjea la paridad garantizada al 1.00 USDC"""
         if self.balance_usdc < self.order_size:
             logger.warning(f"⚠️ Balance virtual insuficiente (${self.balance_usdc:.2f} USDC)")
             return
 
-        # Simular latencia de red en Virginia (15ms)
+        # Simular latencia de colocación en Virginia (15ms)
         if self.latency_ms > 0:
             await asyncio.sleep(self.latency_ms / 1000.0)
 
-        market = self.polymarket.token_to_market.get(signal.token_id)
+        market = self.polymarket.active_markets.get(signal.condition_id)
         if not market:
             return
 
-        book = market.yes_book if market.yes_token_id == signal.token_id else market.no_book
-        current_ask = book.best_ask
+        current_yes_ask = market.yes_book.best_ask
+        current_no_ask = market.no_book.best_ask
+        current_combined = current_yes_ask + current_no_ask
 
-        # Si el libro ya subió y la oferta barata desapareció:
-        if current_ask > signal.best_ask + 0.015:
-            logger.info(f"⚡ [LATENCIA PERDIDA] Oferta a {signal.best_ask:.3f} retirada. Actual: {current_ask:.3f}")
+        # Verificar que el margen de arbitraje siga existiendo tras la latencia
+        if current_combined > config.max_combined_ask_sum:
+            logger.info(f"⚡ [LATENCIA PERDIDA] Los Asks subieron (YES {current_yes_ask:.3f} + NO {current_no_ask:.3f} = ${current_combined:.3f})")
             return
 
-        entry_price = max(0.01, min(0.99, current_ask))
-        shares = round(self.order_size / entry_price, 4)
-        self.balance_usdc -= self.order_size
+        # Calcular número de pares completos a comprar
+        shares_to_buy = round(self.order_size / current_combined, 2)
+        total_cost = round(shares_to_buy * current_combined, 2)
+        redemption_value = round(shares_to_buy * 1.00, 2)
+        net_profit = round(redemption_value - total_cost, 2)
+        profit_pct = round((net_profit / total_cost) * 100.0, 2)
 
-        tp_price = min(0.99, entry_price + config.take_profit_delta)
-        sl_price = max(0.01, entry_price - config.stop_loss_delta)
-        now = time.time()
-        timeout_ts = now + config.position_timeout_seconds
-
-        pos = SimulatedPosition(
-            asset=signal.asset,
-            market_question=signal.market_question,
-            condition_id=signal.condition_id,
-            token_id=signal.token_id,
-            outcome=signal.outcome,
-            entry_price=entry_price,
-            target_tp_price=tp_price,
-            stop_loss_price=sl_price,
-            shares_count=shares,
-            size_usdc=self.order_size,
-            entry_timestamp=now,
-            timeout_timestamp=timeout_ts,
-            asset_price_entry=signal.asset_price,
-            discrepancy_at_entry=signal.discrepancy_usdc
-        )
-
-        self.open_positions[signal.token_id] = pos
-        logger.info(
-            f"🛒 [PAPER BUY] [{signal.asset}] {signal.outcome} @ {entry_price:.3f} USDC | "
-            f"Shares: {shares} | Inversión: ${self.order_size:.2f} | "
-            f"Desfase cazado: +{signal.discrepancy_usdc*100:.1f}¢ | "
-            f"Mercado: {signal.market_question[:45]}..."
-        )
-
-    def evaluate_open_positions(self):
-        """Revisa posiciones abiertas contra el estado del libro para ejecutar TP, SL o Salida Neutral"""
-        now = time.time()
-        for token_id, pos in list(self.open_positions.items()):
-            market = self.polymarket.token_to_market.get(token_id)
-            if not market:
-                continue
-
-            book = market.yes_book if market.yes_token_id == token_id else market.no_book
-            current_bid = book.best_bid
-            current_ask = book.best_ask
-
-            current_spot = self.price_feed.get_price(pos.asset)
-            spot_entry = pos.asset_price_entry
-            spot_pct_move = (current_spot - spot_entry) / spot_entry if spot_entry > 0 else 0.0
-
-            exit_reason = None
-            exit_price = current_bid
-
-            # 1. TAKE PROFIT AGRESIVO: El libro subió y el Bid alcanza nuestro objetivo (+2.5¢)
-            if current_bid >= pos.target_tp_price:
-                exit_reason = "TAKE_PROFIT"
-                exit_price = max(pos.target_tp_price, current_bid)
-
-            # 2. MICRO-SCALP ULTRA-RÁPIDO: Tras solo 1.5s, si el Bid subió (+1.5¢+), asegurar la ganancia y salir
-            elif (now - pos.entry_timestamp >= 1.5) and (current_bid >= pos.entry_price + 0.015):
-                exit_reason = "MICRO_SCALP_FAST"
-                exit_price = current_bid
-
-            # 3. STOP LOSS POR REVERSIÓN SPOT: El precio del exchange se fue en contra (> 0.20%)
-            # TOPE DE PROTECCIÓN: La pérdida máxima se limita estrictamente a stop_loss_price (-2.0¢ = -$2.00)
-            elif (pos.outcome == "YES" and spot_pct_move < -0.0020) or (pos.outcome == "NO" and spot_pct_move > 0.0020):
-                exit_reason = "STOP_LOSS_REVERSAL"
-                exit_price = max(pos.stop_loss_price, current_bid)
-
-            # 4. STOP LOSS DE PRECIO EN LIBRO
-            elif current_bid > 0 and current_bid <= pos.stop_loss_price:
-                exit_reason = "STOP_LOSS_BOOK"
-                exit_price = pos.stop_loss_price
-
-            # 5. TIMEOUT ULTRA-CORTO (3.0s) CON SALIDA PROTEGIDA (MAKER EXIT):
-            # Tras 3 segundos la ventana de latencia expiró; salimos a empate (Breakeven $0.00) sin regalar spread
-            elif now >= pos.timeout_timestamp:
-                exit_reason = "TIMEOUT_NEUTRAL"
-                exit_price = max(pos.entry_price, current_bid)
-
-            if exit_reason:
-                self.open_positions.pop(token_id, None)
-                self._close_position(pos, exit_price, exit_reason, now)
-
-    def _close_position(self, pos: SimulatedPosition, exit_price: float, reason: str, exit_time: float):
-        """Cierra la posición virtual, calcula PnL y guarda en CSV de forma atómica"""
-        proceeds = pos.shares_count * exit_price
-        pnl = proceeds - pos.size_usdc
-        pnl_pct = (pnl / pos.size_usdc) * 100.0
-        lag_duration_ms = int((exit_time - pos.entry_timestamp) * 1000)
-
-        self.balance_usdc += proceeds
-        self.total_pnl_usdc += pnl
+        # Actualizar balance y estadísticas atómicamente
+        self.balance_usdc += net_profit
+        self.total_pnl_usdc += net_profit
         self.closed_trades_count += 1
+        self.wins_count += 1
 
-        if pnl >= 0:
-            self.wins_count += 1
-            color_tag = "[green]"
-            status_symbol = "🟢 WIN"
-        else:
-            self.losses_count += 1
-            color_tag = "[red]"
-            status_symbol = "🔴 LOSS"
+        now = time.time()
+        time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
 
-        asset = getattr(pos, "asset", "BTC")
-        current_asset_price = self.price_feed.get_price(asset)
-        asset_price_entry = getattr(pos, "asset_price_entry", 0.0)
-
+        # Registrar en CSV
         try:
             trade_logger.log_trade({
-                "timestamp_entry": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(pos.entry_timestamp)),
-                "timestamp_exit": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(exit_time)),
-                "market_question": pos.market_question,
-                "token_id": pos.token_id,
-                "outcome": pos.outcome,
-                "side": "BUY_SELL",
-                "entry_price": f"{pos.entry_price:.4f}",
-                "exit_price": f"{exit_price:.4f}",
-                "shares_count": f"{pos.shares_count:.2f}",
-                "size_usdc": f"{pos.size_usdc:.2f}",
-                "pnl_usdc": f"{pnl:.2f}",
-                "pnl_percentage": f"{pnl_pct:.2f}%",
-                "exit_reason": reason,
-                "lag_duration_ms": lag_duration_ms,
-                "btc_price_entry": f"{asset_price_entry:.2f}",
-                "btc_price_exit": f"{current_asset_price:.2f}",
+                "timestamp_entry": time_str,
+                "timestamp_exit": time_str,
+                "market_question": signal.market_question,
+                "token_id": f"{signal.yes_token_id[:6]}_{signal.no_token_id[:6]}",
+                "outcome": "YES+NO_PARITY",
+                "side": "DUAL_BUY",
+                "entry_price": f"{current_combined:.4f}",
+                "exit_price": "1.0000",
+                "shares_count": f"{shares_to_buy:.2f}",
+                "size_usdc": f"{total_cost:.2f}",
+                "pnl_usdc": f"{net_profit:.2f}",
+                "pnl_percentage": f"{profit_pct:.2f}%",
+                "exit_reason": "PARITY_ARBITRAGE_REDEEM",
+                "lag_duration_ms": self.latency_ms,
+                "btc_price_entry": f"{self.price_feed.get_price(signal.asset):.2f}",
+                "btc_price_exit": f"{self.price_feed.get_price(signal.asset):.2f}",
                 "simulated_balance_after": f"{self.balance_usdc:.2f}"
             })
         except Exception as e:
-            logger.debug(f"Error registrando CSV: {e}")
+            logger.debug(f"Error escribiendo CSV: {e}")
 
         logger.info(
-            f"{color_tag}{status_symbol} [{reason}][/] [{asset}] {pos.outcome} | "
-            f"Entrada: {pos.entry_price:.3f} ➔ Salida: {exit_price:.3f} | "
-            f"PnL: {pnl:+.2f} USDC ({pnl_pct:+.1f}%) | "
-            f"Tiempo activo: {lag_duration_ms/1000:.1f}s | "
-            f"Balance Total: ${self.balance_usdc:.2f} USDC"
+            f"[bold green]🟢 PARITY ARBITRAGE ARB[/bold green] [{signal.asset}] "
+            f"YES @ {current_yes_ask:.3f} + NO @ {current_no_ask:.3f} = ${current_combined:.3f} ➔ "
+            f"Valor Canjeado: $1.000 | "
+            f"Ganancia Neta: [bold green]+${net_profit:.2f} USDC (+{profit_pct:.2f}%)[/bold green] | "
+            f"Balance Total: ${self.balance_usdc:.2f} USDC | "
+            f"Mercado: {signal.market_question[:40]}..."
         )
+
+    def evaluate_open_positions(self):
+        """En arbitraje de paridad el canje es instantáneo (0 posiciones abiertas en riesgo)"""
+        pass

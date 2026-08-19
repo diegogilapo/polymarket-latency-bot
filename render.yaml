@@ -15,21 +15,15 @@ services:
         value: "1000.0"
       - key: SIMULATED_NETWORK_LATENCY_MS
         value: "15"
-      - key: MIN_PRICE_DISCREPANCY
-        value: "0.025"
+      - key: MAX_COMBINED_ASK_SUM
+        value: "0.992"
+      - key: MIN_PARITY_PROFIT_PCT
+        value: "0.008"
       - key: ORDER_SIZE_USDC
         value: "50.0"
-      - key: TAKE_PROFIT_DELTA
-        value: "0.025"
-      - key: STOP_LOSS_DELTA
-        value: "0.020"
-      - key: POSITION_TIMEOUT_SECONDS
-        value: "3.0"
+      - key: MIN_SHARE_DEPTH
+        value: "10.0"
       - key: MONITORED_ASSETS
         value: "BTC,ETH,SOL,DOGE,XRP"
-      - key: MOMENTUM_WINDOW_SECONDS
-        value: "4.0"
-      - key: FAST_MOVE_PCT_THRESHOLD
-        value: "0.0018"
       - key: POLYMARKET_SEARCH_KEYWORDS
         value: "Bitcoin,BTC,Ethereum,ETH,Solana,SOL,Dogecoin,DOGE,XRP,Crypto,Price,Hit,Reach,Above"
