@@ -34,13 +34,12 @@ class BotConfig:
     simulation_initial_balance: float = field(default_factory=lambda: get_env_float("SIMULATION_INITIAL_BALANCE", 1000.0))
     simulated_network_latency_ms: int = field(default_factory=lambda: get_env_int("SIMULATED_NETWORK_LATENCY_MS", 15))
 
-    # Parámetros de Trading Blindados contra el Spread
-    # Discrepancia mínima debe superar el spread del libro (0.030 = 3.0 centavos)
-    min_price_discrepancy: float = field(default_factory=lambda: get_env_float("MIN_PRICE_DISCREPANCY", 0.030))
+    # Parámetros de Trading de Alta Frecuencia (Salida Ultra-Rápida)
+    min_price_discrepancy: float = field(default_factory=lambda: get_env_float("MIN_PRICE_DISCREPANCY", 0.025))
     order_size_usdc: float = field(default_factory=lambda: get_env_float("ORDER_SIZE_USDC", 50.0))
-    take_profit_delta: float = field(default_factory=lambda: get_env_float("TAKE_PROFIT_DELTA", 0.040))
-    stop_loss_delta: float = field(default_factory=lambda: get_env_float("STOP_LOSS_DELTA", 0.030))
-    position_timeout_seconds: int = field(default_factory=lambda: get_env_int("POSITION_TIMEOUT_SECONDS", 40))
+    take_profit_delta: float = field(default_factory=lambda: get_env_float("TAKE_PROFIT_DELTA", 0.025))
+    stop_loss_delta: float = field(default_factory=lambda: get_env_float("STOP_LOSS_DELTA", 0.020))
+    position_timeout_seconds: float = field(default_factory=lambda: get_env_float("POSITION_TIMEOUT_SECONDS", 3.0))
 
     # Activos Cripto Monitorizados
     monitored_assets: List[str] = field(default_factory=lambda: get_env_list("MONITORED_ASSETS", ["BTC", "ETH", "SOL", "DOGE", "XRP"]))
