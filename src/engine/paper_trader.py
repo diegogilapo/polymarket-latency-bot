@@ -130,25 +130,26 @@ class PaperTradingEngine:
             # 1. TAKE PROFIT AGRESIVO: El libro subió y el Bid alcanza nuestro objetivo (+2.5¢)
             if current_bid >= pos.target_tp_price:
                 exit_reason = "TAKE_PROFIT"
-                exit_price = current_bid
+                exit_price = max(pos.target_tp_price, current_bid)
 
             # 2. MICRO-SCALP ULTRA-RÁPIDO: Tras solo 1.5s, si el Bid subió (+1.5¢+), asegurar la ganancia y salir
             elif (now - pos.entry_timestamp >= 1.5) and (current_bid >= pos.entry_price + 0.015):
                 exit_reason = "MICRO_SCALP_FAST"
                 exit_price = current_bid
 
-            # 3. STOP LOSS POR REVERSIÓN SPOT: El precio del exchange se fue en contra (> 0.15%)
-            elif (pos.outcome == "YES" and spot_pct_move < -0.0015) or (pos.outcome == "NO" and spot_pct_move > 0.0015):
+            # 3. STOP LOSS POR REVERSIÓN SPOT: El precio del exchange se fue en contra (> 0.20%)
+            # TOPE DE PROTECCIÓN: La pérdida máxima se limita estrictamente a stop_loss_price (-2.0¢ = -$2.00)
+            elif (pos.outcome == "YES" and spot_pct_move < -0.0020) or (pos.outcome == "NO" and spot_pct_move > 0.0020):
                 exit_reason = "STOP_LOSS_REVERSAL"
-                exit_price = max(0.01, current_bid)
+                exit_price = max(pos.stop_loss_price, current_bid)
 
             # 4. STOP LOSS DE PRECIO EN LIBRO
             elif current_bid > 0 and current_bid <= pos.stop_loss_price:
                 exit_reason = "STOP_LOSS_BOOK"
-                exit_price = current_bid
+                exit_price = pos.stop_loss_price
 
             # 5. TIMEOUT ULTRA-CORTO (3.0s) CON SALIDA PROTEGIDA (MAKER EXIT):
-            # Tras 3 segundos la ventana de latencia expiró; salimos a empate (Breakeven) sin regalar spread
+            # Tras 3 segundos la ventana de latencia expiró; salimos a empate (Breakeven $0.00) sin regalar spread
             elif now >= pos.timeout_timestamp:
                 exit_reason = "TIMEOUT_NEUTRAL"
                 exit_price = max(pos.entry_price, current_bid)
