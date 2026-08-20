@@ -68,9 +68,19 @@ class PaperTradingEngine:
             logger.info(f"⚡ [LATENCIA PERDIDA] Los Asks subieron (YES {current_yes_ask:.3f} + NO {current_no_ask:.3f} = ${current_combined:.3f})")
             return
 
-        # Calcular número de pares completos a comprar
-        shares_to_buy = round(self.order_size / current_combined, 2)
+        # Calcular número de pares completos a comprar (Dinámico según liquidez del libro)
+        if config.dynamic_sizing:
+            avail_pairs = min(market.yes_book.best_ask_size, market.no_book.best_ask_size)
+            max_shares_affordable = self.balance_usdc / current_combined
+            max_shares_cap = config.max_order_size_usdc / current_combined
+            shares_to_buy = round(min(avail_pairs, max_shares_affordable, max_shares_cap), 2)
+        else:
+            shares_to_buy = round(self.order_size / current_combined, 2)
+
         total_cost = round(shares_to_buy * current_combined, 2)
+        if total_cost < config.min_order_size_usdc:
+            return
+
         redemption_value = round(shares_to_buy * 1.00, 2)
         net_profit = round(redemption_value - total_cost, 2)
         profit_pct = round((net_profit / total_cost) * 100.0, 2)

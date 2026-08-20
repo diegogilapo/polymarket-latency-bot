@@ -38,8 +38,13 @@ class BotConfig:
     # Se ejecuta cuando la suma de compra (YES Ask + NO Ask) es inferior a 1.00 USDC
     max_combined_ask_sum: float = field(default_factory=lambda: get_env_float("MAX_COMBINED_ASK_SUM", 0.992))
     min_parity_profit_pct: float = field(default_factory=lambda: get_env_float("MIN_PARITY_PROFIT_PCT", 0.008)) # 0.8% mínimo
-    order_size_usdc: float = field(default_factory=lambda: get_env_float("ORDER_SIZE_USDC", 50.0))
     min_share_depth: float = field(default_factory=lambda: get_env_float("MIN_SHARE_DEPTH", 10.0))
+    
+    # Gestión de Capital Dinámico por Liquidez
+    dynamic_sizing: bool = field(default_factory=lambda: get_env_bool("DYNAMIC_SIZING", True))
+    max_order_size_usdc: float = field(default_factory=lambda: get_env_float("MAX_ORDER_SIZE_USDC", 500.0))
+    min_order_size_usdc: float = field(default_factory=lambda: get_env_float("MIN_ORDER_SIZE_USDC", 25.0))
+    order_size_usdc: float = field(default_factory=lambda: get_env_float("ORDER_SIZE_USDC", 100.0))
 
     # Activos Cripto Monitorizados
     monitored_assets: List[str] = field(default_factory=lambda: get_env_list("MONITORED_ASSETS", ["BTC", "ETH", "SOL", "DOGE", "XRP"]))

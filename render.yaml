@@ -19,8 +19,14 @@ services:
         value: "0.992"
       - key: MIN_PARITY_PROFIT_PCT
         value: "0.008"
+      - key: DYNAMIC_SIZING
+        value: "True"
+      - key: MAX_ORDER_SIZE_USDC
+        value: "500.0"
+      - key: MIN_ORDER_SIZE_USDC
+        value: "25.0"
       - key: ORDER_SIZE_USDC
-        value: "50.0"
+        value: "100.0"
       - key: MIN_SHARE_DEPTH
         value: "10.0"
       - key: MONITORED_ASSETS
