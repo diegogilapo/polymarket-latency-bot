@@ -11,6 +11,15 @@ if sys.platform == "win32":
 
 import asyncio
 import signal
+
+# Habilitar motor de eventos ultra-rápido uvloop en producción Linux (Render / AWS)
+if sys.platform != "win32":
+    try:
+        import uvloop
+        uvloop.install()
+    except ImportError:
+        pass
+
 from src.config import config
 from src.utils.logger import get_logger, console
 from src.utils.dns_resolver import setup_smart_dns

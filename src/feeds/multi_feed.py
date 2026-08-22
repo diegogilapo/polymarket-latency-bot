@@ -7,6 +7,8 @@ import websockets
 from src.config import config
 from src.utils.logger import get_logger
 
+from src.utils.fast_json import fast_loads, fast_dumps
+
 logger = get_logger("MultiAssetFeed")
 
 # Mapeo de símbolos por exchange
@@ -36,7 +38,7 @@ ASSET_MAPPINGS = {
 
 class MultiExchangePriceFeed:
     """
-    Agregador multi-activo y multi-exchange en tiempo real:
+    Agregador multi-activo y multi-exchange en tiempo real acelerado con SIMD:
     Soporta BTC, ETH, SOL, DOGE y XRP simultáneamente.
     """
     def __init__(self):
@@ -67,21 +69,21 @@ class MultiExchangePriceFeed:
     def register_callback(self, cb: Callable[[str, float, float], None]):
         self._callbacks.append(cb)
 
-    def record_tick(self, asset: str, source: str, price: float):
-        if asset not in self.assets or price <= 0:
+    def record_tick(self, asset: str, exchange: str, price: float):
+        if price <= 0 or asset not in self.assets:
             return
-        now = time.time()
-        self.asset_prices[asset][source] = price
-        self.last_update_times[asset][source] = now
-        self.is_connected[source] = True
 
-        # Calcular consenso para este activo
-        active_prices = [
-            p for s, p in self.asset_prices[asset].items()
-            if p > 0 and (now - self.last_update_times[asset].get(s, 0)) < 15.0
+        now = time.time()
+        self.asset_prices[asset][exchange] = price
+        self.last_update_times[asset][exchange] = now
+
+        valid_prices = [
+            p for exch, p in self.asset_prices[asset].items()
+            if p > 0 and (now - self.last_update_times[asset][exch]) < 10.0
         ]
-        if active_prices:
-            self.consensus_prices[asset] = sum(active_prices) / len(active_prices)
+
+        if valid_prices:
+            self.consensus_prices[asset] = sum(valid_prices) / len(valid_prices)
         else:
             self.consensus_prices[asset] = price
 
@@ -126,7 +128,7 @@ class MultiExchangePriceFeed:
 
     async def start(self):
         self._running = True
-        logger.info(f"Iniciando feeds multi-activo para {', '.join(self.assets)}...")
+        logger.info(f"Iniciando feeds multi-activo ultra-rápidos para {', '.join(self.assets)}...")
         await asyncio.gather(
             self._feed_coinbase(),
             self._feed_kraken(),
@@ -144,19 +146,19 @@ class MultiExchangePriceFeed:
             try:
                 async with websockets.connect(config.coinbase_ws_url, ping_interval=20, ping_timeout=10) as ws:
                     sub = {"type": "subscribe", "product_ids": product_ids, "channels": ["ticker"]}
-                    await ws.send(json.dumps(sub))
+                    await ws.send(fast_dumps(sub))
                     self.is_connected["Coinbase"] = True
-                    logger.info("🟢 Coinbase WS conectado para múltiples activos")
+                    logger.info("🟢 Coinbase WS conectado con parser SIMD")
                     async for msg in ws:
                         if not self._running:
                             break
-                        d = json.loads(msg)
+                        d = fast_loads(msg)
                         if d.get("type") == "ticker" and "price" in d:
                             pid = d.get("product_id")
                             asset = ASSET_MAPPINGS["Coinbase"].get(pid)
                             if asset:
                                 self.record_tick(asset, "Coinbase", float(d["price"]))
-            except Exception as e:
+            except Exception:
                 self.is_connected["Coinbase"] = False
                 await asyncio.sleep(3.0)
 
@@ -171,20 +173,20 @@ class MultiExchangePriceFeed:
             try:
                 async with websockets.connect(config.kraken_ws_url, ping_interval=20, ping_timeout=10) as ws:
                     sub = {"event": "subscribe", "pair": kraken_pairs, "subscription": {"name": "ticker"}}
-                    await ws.send(json.dumps(sub))
+                    await ws.send(fast_dumps(sub))
                     self.is_connected["Kraken"] = True
-                    logger.info("🟢 Kraken WS conectado para múltiples activos")
+                    logger.info("🟢 Kraken WS conectado con parser SIMD")
                     async for msg in ws:
                         if not self._running:
                             break
-                        d = json.loads(msg)
+                        d = fast_loads(msg)
                         if isinstance(d, list) and len(d) > 3:
                             pair = d[3]
                             asset = ASSET_MAPPINGS["Kraken"].get(pair)
                             ticker_data = d[1]
                             if asset and isinstance(ticker_data, dict) and "c" in ticker_data:
                                 self.record_tick(asset, "Kraken", float(ticker_data["c"][0]))
-            except Exception as e:
+            except Exception:
                 self.is_connected["Kraken"] = False
                 await asyncio.sleep(3.0)
 
@@ -195,16 +197,16 @@ class MultiExchangePriceFeed:
             try:
                 async with websockets.connect(combined_url, ping_interval=20, ping_timeout=10) as ws:
                     self.is_connected["Binance.US"] = True
-                    logger.info("🟢 Binance.US WS conectado para múltiples activos")
+                    logger.info("🟢 Binance.US WS conectado con parser SIMD")
                     async for msg in ws:
                         if not self._running:
                             break
-                        d = json.loads(msg)
+                        d = fast_loads(msg)
                         stream_data = d.get("data", d)
                         s = stream_data.get("s", "")
                         asset = ASSET_MAPPINGS["Binance.US"].get(s)
                         if asset and "c" in stream_data:
                             self.record_tick(asset, "Binance.US", float(stream_data["c"]))
-            except Exception as e:
+            except Exception:
                 self.is_connected["Binance.US"] = False
                 await asyncio.sleep(3.0)

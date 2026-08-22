@@ -11,6 +11,7 @@ import websockets
 from src.config import config
 from src.utils.logger import get_logger
 from src.utils.dns_resolver import get_aiohttp_connector
+from src.utils.fast_json import fast_loads, fast_dumps
 
 logger = get_logger("PolymarketFeed")
 
@@ -278,16 +279,16 @@ class PolymarketFeed:
                             "assets_ids": chunk,
                             "type": "market"
                         }
-                        await ws.send(json.dumps(sub_payload))
-                        await asyncio.sleep(0.1)
+                        await ws.send(fast_dumps(sub_payload))
+                        await asyncio.sleep(0.05)
 
-                    logger.info(f"🟢 Suscrito al WebSocket del CLOB de Polymarket ({len(token_ids)} tokens activos en streaming)")
+                    logger.info(f"🟢 Suscrito al WebSocket del CLOB de Polymarket con aceleración SIMD ({len(token_ids)} tokens)")
 
                     async for msg in ws:
                         if not self._running:
                             break
                         try:
-                            data = json.loads(msg)
+                            data = fast_loads(msg)
                             if isinstance(data, list):
                                 for item in data:
                                     self._handle_ws_event(item)

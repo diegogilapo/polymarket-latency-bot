@@ -41,6 +41,14 @@ def setup_smart_dns():
     socket.getaddrinfo = _doh_getaddrinfo
 
 def get_aiohttp_connector() -> aiohttp.TCPConnector:
-    """Retorna un conector TCP con ThreadedResolver y SSL certifi para compatibilidad universal"""
+    """Retorna un conector TCP ultra-optimizado para HFT con SSL certifi y pool persistente"""
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-    return aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver(), ssl=ssl_ctx)
+    return aiohttp.TCPConnector(
+        resolver=aiohttp.ThreadedResolver(),
+        ssl=ssl_ctx,
+        limit=150,
+        ttl_dns_cache=300,
+        keepalive_timeout=75.0,
+        force_close=False,
+        enable_cleanup_closed=True
+    )
