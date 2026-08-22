@@ -1,6 +1,5 @@
 import os
-import json
-import time
+import asyncio
 from aiohttp import web
 from src.config import config
 from src.feeds.multi_feed import MultiExchangePriceFeed
@@ -13,7 +12,10 @@ logger = get_logger("WebServer")
 
 class BotWebServer:
     """
-    Servidor web HTTP embebido multi-cripto para Render Web Service y acceso remoto.
+    Servidor Web y Dashboard HTTP para Render:
+    - Endpoint /health para el Health Check de Render.
+    - Endpoint /api/status con métricas en formato JSON.
+    - Dashboard HTML interactivo en tiempo real con cotizaciones de Market Making.
     """
     def __init__(
         self,
@@ -26,14 +28,16 @@ class BotWebServer:
         self.polymarket = polymarket
         self.trader = trader
         self.detector = detector
-        self.port = int(os.getenv("PORT", 8080))
         self.app = web.Application()
         self.runner = None
         self.site = None
-        
-        # Rutas
-        self.app.router.add_get("/", self.handle_dashboard)
+        self.port = int(os.getenv("PORT", "10000"))
+
+        # Rutas HTTP
         self.app.router.add_get("/health", self.handle_health)
+        self.app.router.add_head("/health", self.handle_health)
+        self.app.router.add_get("/", self.handle_dashboard)
+        self.app.router.add_head("/", self.handle_dashboard)
         self.app.router.add_get("/api/status", self.handle_api_status)
 
     async def handle_health(self, request):
@@ -53,15 +57,18 @@ class BotWebServer:
             "closed_trades": self.trader.closed_trades_count,
             "wins": self.trader.wins_count,
             "losses": self.trader.losses_count,
-            "open_positions": len(self.trader.open_positions)
+            "active_inventories": len(self.trader.inventories)
         }
         return web.json_response(data)
 
     async def handle_dashboard(self, request):
+        if request.method == "HEAD":
+            return web.Response(status=200, content_type="text/html")
+
         diag = self.detector.get_scan_diagnosis()
         pnl = self.trader.total_pnl_usdc
         pnl_color = "#10b981" if pnl >= 0 else "#ef4444"
-        winrate = (self.trader.wins_count / self.trader.closed_trades_count * 100) if self.trader.closed_trades_count > 0 else 0.0
+        winrate = (self.trader.wins_count / self.trader.closed_trades_count * 100) if self.trader.closed_trades_count > 0 else 100.0
 
         # Tarjetas de Criptomonedas (BTC, ETH, SOL, DOGE, XRP)
         crypto_cards = ""
@@ -73,7 +80,7 @@ class BotWebServer:
             crypto_cards += f"""<div class="card">
                 <div class="card-label">{a} Spot Consenso</div>
                 <div class="card-value">{p_str if p > 0 else '---'}</div>
-                <div class="card-sub" style="color: {pct_col}; font-weight:600;">Δ5s: {pct:+.2f}%</div>
+                <div class="card-sub" style="color: {pct_col}; font-weight:600;">Δ3s: {pct:+.2f}%</div>
             </div>"""
 
         # Filas de mercados de Market Making
@@ -115,18 +122,18 @@ class BotWebServer:
     <meta http-equiv="refresh" content="5">
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0f19; color: #e2e8f0; padding: 20px; }}
-        .container {{ max-width: 1000px; margin: 0 auto; }}
-        .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 15px; margin-bottom: 20px; }}
-        .title {{ font-size: 22px; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 8px; }}
-        .badge {{ padding: 3px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600; text-transform: uppercase; }}
-        .verdict-box {{ background: #1e1b4b; border: 1px solid #4338ca; border-radius: 8px; padding: 14px 18px; margin-bottom: 20px; font-size: 14px; color: #e0e7ff; }}
-        .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }}
-        .card {{ background: #131c2e; border: 1px solid #1e293b; border-radius: 10px; padding: 14px; }}
-        .card-label {{ font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 20px; }}
+        .container {{ max-width: 1200px; margin: 0 auto; }}
+        .header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #1e293b; }}
+        .title {{ font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px; color: #38bdf8; }}
+        .badge {{ padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }}
+        .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px; }}
+        .card {{ background: #1e293b; border-radius: 12px; padding: 16px; border: 1px solid #334155; }}
+        .card-label {{ font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; margin-bottom: 6px; }}
         .card-value {{ font-size: 20px; font-weight: 700; color: #f8fafc; }}
-        .card-sub {{ font-size: 11px; margin-top: 4px; color: #64748b; }}
-        .table-container {{ background: #131c2e; border: 1px solid #1e293b; border-radius: 10px; padding: 16px; margin-top: 15px; }}
+        .card-sub {{ font-size: 12px; color: #64748b; margin-top: 4px; }}
+        .verdict-box {{ background: #1e293b; border-left: 4px solid #10b981; padding: 14px 18px; border-radius: 8px; margin-bottom: 24px; font-size: 14px; }}
+        .table-container {{ background: #1e293b; border-radius: 12px; padding: 16px; border: 1px solid #334155; overflow-x: auto; }}
         .table-title {{ font-size: 13px; font-weight: 600; color: #94a3b8; margin-bottom: 12px; text-transform: uppercase; }}
         table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
         th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #1e293b; }}
@@ -138,7 +145,7 @@ class BotWebServer:
     <div class="container">
         <div class="header">
             <div class="title">
-                <span>🚀</span> Polymarket Multi-Crypto Latency Radar
+                <span>🏛️</span> Polymarket Quantitative Market Maker
             </div>
             <div>
                 <span class="badge" style="background:#0369a1;color:#e0f2fe;"><span class="status-dot"></span>{'MODO DEMO' if config.simulation_mode else 'MODO REAL'}</span>
@@ -146,7 +153,7 @@ class BotWebServer:
         </div>
 
         <div class="verdict-box">
-            <strong>🔍 Diagnóstico del Scanner:</strong> {diag['verdict']}
+            <strong>🔍 Diagnóstico del Market Maker:</strong> {diag['verdict']}
         </div>
 
         <div class="grid">
@@ -160,29 +167,29 @@ class BotWebServer:
                 <div class="card-sub">Inicial: ${self.trader.initial_balance:,.2f} USDC</div>
             </div>
             <div class="card">
-                <div class="card-label">PnL Acumulado</div>
+                <div class="card-label">PnL de Spread Acumulado</div>
                 <div class="card-value" style="color: {pnl_color}">{pnl:+,.2f} USDC</div>
                 <div class="card-sub">WinRate: {winrate:.1f}% ({self.trader.wins_count}W / {self.trader.losses_count}L)</div>
             </div>
             <div class="card">
-                <div class="card-label">Posiciones Abiertas</div>
-                <div class="card-value">{len(self.trader.open_positions)} activas</div>
-                <div class="card-sub">TP: +{config.take_profit_delta*100:.0f}¢ | SL: -{config.stop_loss_delta*100:.0f}¢</div>
+                <div class="card-label">Mercados Cotizando en Vivo</div>
+                <div class="card-value">{len(self.polymarket.active_markets)} libros activos</div>
+                <div class="card-sub">Spread Objetivo: +{config.target_spread_cents*100:.1f}¢ por ciclo</div>
             </div>
         </div>
 
         <div class="table-container">
-            <div class="table-title">MERCADOS POLYMARKET ACTIVOS ({len(self.polymarket.active_markets)} MERCADOS)</div>
+            <div class="table-title">COTIZACIÓN LÍMITE Y RADAR DE SPREAD ({len(self.polymarket.active_markets)} MERCADOS)</div>
             <table>
                 <thead>
                     <tr>
                         <th>Cripto</th>
-                        <th>Pregunta & Outcome</th>
-                        <th>Best Bid</th>
-                        <th>Best Ask</th>
+                        <th>Mercado</th>
                         <th>Fair Value</th>
-                        <th>Desfase</th>
-                        <th>Acción</th>
+                        <th>Límite Compra (Bid)</th>
+                        <th>Límite Venta (Ask)</th>
+                        <th>Spread Capturado</th>
+                        <th>Oportunidad</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -192,7 +199,7 @@ class BotWebServer:
         </div>
         
         <p style="text-align: center; color: #475569; font-size: 11px; margin-top: 20px;">
-            Auto-refresco cada 5s • Monitoreando {', '.join(config.monitored_assets)} en Coinbase, Kraken y Binance.US
+            Auto-refresco cada 5s • Rol: 100% MAKER • Aceleración SIMD activa
         </p>
     </div>
 </body>
@@ -207,9 +214,11 @@ class BotWebServer:
             await self.site.start()
             logger.info(f"🌐 Servidor Web HTTP activo en el puerto {self.port}")
         except Exception as e:
-            logger.error(f"Error iniciando servidor web: {e}")
+            logger.error(f"Error al iniciar servidor web: {e}")
 
     async def stop(self):
+        if self.site:
+            await self.site.stop()
         if self.runner:
             await self.runner.cleanup()
-            logger.info("Servidor web detenido.")
+        logger.info("Servidor Web detenido.")
