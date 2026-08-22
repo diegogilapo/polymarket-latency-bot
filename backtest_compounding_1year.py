@@ -125,10 +125,18 @@ class AutoCompoundingMarketMakerBacktester:
 
         return day_trades, current_balance
 
-def run_compounding_backtest():
+def run_compounding_backtest(initial_balance: float = 50.0):
+    if len(sys.argv) > 1:
+        try:
+            initial_balance = float(sys.argv[1])
+        except ValueError:
+            pass
+
+    min_order = max(5.0, initial_balance * 0.08)
+
     console.print(Panel(
-        "[bold cyan]🚀 Polymarket Quantitative Market Maker - Backtest con Interés Compuesto Automático (Auto-Compounding)[/bold cyan]\n"
-        "[dim]Cuenta Inicial: $300.00 USDC | Modelo: Órdenes Límite Maker + Escalado del 8% de Equity por Ciclo | Duración: 1 Año (365 Días)[/dim]",
+        f"[bold cyan]🚀 Polymarket Quantitative Market Maker - Backtest con Interés Compuesto Automático[/bold cyan]\n"
+        f"[dim]Cuenta Inicial: ${initial_balance:,.2f} USDC | Modelo: Órdenes Límite Maker + Escalado del 8% de Equity por Ciclo | Duración: 1 Año (365 Días)[/dim]",
         border_style="cyan"
     ))
 
@@ -143,9 +151,9 @@ def run_compounding_backtest():
     }
 
     engine = AutoCompoundingMarketMakerBacktester(
-        initial_balance=300.0,
+        initial_balance=initial_balance,
         allocation_pct=0.08,
-        min_order_usdc=15.0,
+        min_order_usdc=min_order,
         max_order_usdc=1500.0,
         target_spread_cents=0.030,
         adverse_selection_rate=0.045
@@ -221,7 +229,7 @@ def run_compounding_backtest():
         f"[bold white]🔢 TOTAL CICLOS MAKER:[/] [bold cyan]{total_trades:,} ciclos[/bold cyan] (~{total_trades/365:.1f} ciclos/día)\n"
         f"[bold white]⚡ CRECIMIENTO ORDEN:[/]   [bold yellow]De ${engine.min_order_usdc:.2f} ➔ ${monthly_stats[12]['end_size']:,.2f} USDC por orden límite[/bold yellow]"
     )
-    console.print(Panel(summary, title="💵 Estado Financiero con Interés Compuesto (1 Año / $300 Inicial)", border_style="green"))
+    console.print(Panel(summary, title=f"💵 Estado Financiero con Interés Compuesto (1 Año / ${engine.initial_balance:,.2f} Inicial)", border_style="green"))
 
     # 2. TABLA DE ESCALADO MENSUAL CON AUTO-COMPOUNDING
     table_compounding = Table(title="📈 Progresión Exponencial Mes a Mes (Interés Compuesto Automático)", border_style="yellow", show_header=True)
