@@ -15,20 +15,20 @@ services:
         value: "1000.0"
       - key: SIMULATED_NETWORK_LATENCY_MS
         value: "15"
-      - key: MAX_COMBINED_ASK_SUM
-        value: "0.992"
-      - key: MIN_PARITY_PROFIT_PCT
-        value: "0.008"
-      - key: DYNAMIC_SIZING
-        value: "True"
-      - key: MAX_ORDER_SIZE_USDC
-        value: "500.0"
-      - key: MIN_ORDER_SIZE_USDC
-        value: "25.0"
+      - key: TARGET_SPREAD_CENTS
+        value: "0.030"
+      - key: MIN_SPREAD_CENTS
+        value: "0.018"
       - key: ORDER_SIZE_USDC
-        value: "100.0"
-      - key: MIN_SHARE_DEPTH
-        value: "10.0"
+        value: "50.0"
+      - key: MAX_ORDER_SIZE_USDC
+        value: "250.0"
+      - key: MAX_INVENTORY_PER_MARKET
+        value: "300.0"
+      - key: INVENTORY_SKEW_FACTOR
+        value: "0.00008"
+      - key: FAST_VOLATILITY_CANCEL_PCT
+        value: "0.0015"
       - key: MONITORED_ASSETS
         value: "BTC,ETH,SOL,DOGE,XRP"
       - key: POLYMARKET_SEARCH_KEYWORDS

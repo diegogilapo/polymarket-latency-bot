@@ -34,22 +34,21 @@ class BotConfig:
     simulation_initial_balance: float = field(default_factory=lambda: get_env_float("SIMULATION_INITIAL_BALANCE", 1000.0))
     simulated_network_latency_ms: int = field(default_factory=lambda: get_env_int("SIMULATED_NETWORK_LATENCY_MS", 15))
 
-    # --- ESTRATEGIA DE ARBITRAJE ESTRUCTURAL DE PARIDAD BINARIA (100% RISK-FREE) ---
-    # Se ejecuta cuando la suma de compra (YES Ask + NO Ask) es inferior a 1.00 USDC
-    max_combined_ask_sum: float = field(default_factory=lambda: get_env_float("MAX_COMBINED_ASK_SUM", 0.992))
-    min_parity_profit_pct: float = field(default_factory=lambda: get_env_float("MIN_PARITY_PROFIT_PCT", 0.008)) # 0.8% mínimo
-    min_share_depth: float = field(default_factory=lambda: get_env_float("MIN_SHARE_DEPTH", 10.0))
+    # --- ESTRATEGIA DE MARKET MAKING CUANTITATIVO CON ÓRDENES LÍMITE (MAKER ONLY) ---
+    # Captura sistemática de spread y arbitraje de precios erróneos
+    target_spread_cents: float = field(default_factory=lambda: get_env_float("TARGET_SPREAD_CENTS", 0.030)) # 3.0¢ de spread
+    min_spread_cents: float = field(default_factory=lambda: get_env_float("MIN_SPREAD_CENTS", 0.018))    # 1.8¢ spread mínimo
+    order_size_usdc: float = field(default_factory=lambda: get_env_float("ORDER_SIZE_USDC", 50.0))       # $50 por orden límite
+    max_order_size_usdc: float = field(default_factory=lambda: get_env_float("MAX_ORDER_SIZE_USDC", 250.0))
+    max_inventory_per_market: float = field(default_factory=lambda: get_env_float("MAX_INVENTORY_PER_MARKET", 300.0))
+    inventory_skew_factor: float = field(default_factory=lambda: get_env_float("INVENTORY_SKEW_FACTOR", 0.00008))
     
-    # Gestión de Capital Dinámico por Liquidez
-    dynamic_sizing: bool = field(default_factory=lambda: get_env_bool("DYNAMIC_SIZING", True))
-    max_order_size_usdc: float = field(default_factory=lambda: get_env_float("MAX_ORDER_SIZE_USDC", 500.0))
-    min_order_size_usdc: float = field(default_factory=lambda: get_env_float("MIN_ORDER_SIZE_USDC", 25.0))
-    order_size_usdc: float = field(default_factory=lambda: get_env_float("ORDER_SIZE_USDC", 100.0))
+    # Cancelación ultra-rápida ante volatilidad tóxica (0.15% en 3s)
+    fast_volatility_cancel_pct: float = field(default_factory=lambda: get_env_float("FAST_VOLATILITY_CANCEL_PCT", 0.0015))
+    momentum_window_seconds: float = field(default_factory=lambda: get_env_float("MOMENTUM_WINDOW_SECONDS", 3.0))
 
     # Activos Cripto Monitorizados
     monitored_assets: List[str] = field(default_factory=lambda: get_env_list("MONITORED_ASSETS", ["BTC", "ETH", "SOL", "DOGE", "XRP"]))
-    momentum_window_seconds: float = field(default_factory=lambda: get_env_float("MOMENTUM_WINDOW_SECONDS", 4.0))
-    fast_move_pct_threshold: float = field(default_factory=lambda: get_env_float("FAST_MOVE_PCT_THRESHOLD", 0.0018))
 
     # Búsqueda en Polymarket
     polymarket_search_keywords: List[str] = field(

@@ -76,24 +76,31 @@ class BotWebServer:
                 <div class="card-sub" style="color: {pct_col}; font-weight:600;">Δ5s: {pct:+.2f}%</div>
             </div>"""
 
-        # Filas de mercados de paridad
+        # Filas de mercados de Market Making
         market_rows = ""
         evals = diag.get("market_evals", [])
         for ev in evals[:15]:
-            cost = ev["combined_cost"]
-            margin = ev["guaranteed_margin"]
-            margin_pct = ev["margin_pct"]
-            cost_color = "#10b981" if cost < 1.00 else "#e2e8f0"
-            margin_color = "#10b981" if margin > 0 else "#94a3b8"
-            signal_badge = '<span class="badge" style="background:#065f46;color:#a7f3d0;">EJECUTAR ARB</span>' if ev["is_signal"] else '<span style="color:#64748b;">Esperar</span>'
+            fair = ev["fair_price"]
+            bid = ev["our_bid"]
+            ask = ev["our_ask"]
+            spread = ev["spread_captured"]
+            m_type = ev["mispricing_type"]
+
+            if m_type == "CHEAP_ASK":
+                badge = '<span class="badge" style="background:#065f46;color:#a7f3d0;">COMPRA BARATA</span>'
+            elif m_type == "EXPENSIVE_BID":
+                badge = '<span class="badge" style="background:#991b1b;color:#fecaca;">VENTA CARA</span>'
+            else:
+                badge = '<span class="badge" style="background:#1e1b4b;color:#38bdf8;">SPREAD MAKER</span>'
+
             market_rows += f"""<tr>
                 <td><span class="badge" style="background:#312e81;color:#c7d2fe;">{ev.get('asset', 'CRYPTO')}</span></td>
-                <td><strong>{ev['question'][:60]}...</strong></td>
-                <td style="color:#38bdf8;">${ev['yes_ask']:.3f}</td>
-                <td style="color:#38bdf8;">${ev['no_ask']:.3f}</td>
-                <td style="color:{cost_color};font-weight:700;">${cost:.3f}</td>
-                <td style="color:{margin_color};font-weight:600;">{margin*100:+.1f}¢ ({margin_pct:+.1f}%)</td>
-                <td>{signal_badge}</td>
+                <td><strong>{ev['question'][:55]}...</strong></td>
+                <td style="color:#38bdf8;font-weight:600;">${fair:.3f}</td>
+                <td style="color:#10b981;font-weight:700;">${bid:.3f}</td>
+                <td style="color:#f87171;font-weight:700;">${ask:.3f}</td>
+                <td style="color:#fbbf24;font-weight:700;">+{spread*100:.1f}¢</td>
+                <td>{badge}</td>
             </tr>"""
 
         if not market_rows:
@@ -104,7 +111,7 @@ class BotWebServer:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Polymarket Structural Arbitrage - 100% Risk-Free</title>
+    <title>Polymarket Quantitative Market Maker - Maker Only</title>
     <meta http-equiv="refresh" content="5">
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}

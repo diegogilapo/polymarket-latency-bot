@@ -1,35 +1,41 @@
 import time
 import asyncio
-from dataclasses import dataclass
-from typing import Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any
 from src.config import config
-from src.engine.arbitrage_detector import ArbitrageSignal
+from src.engine.arbitrage_detector import MarketMakingOpportunity
 from src.feeds.polymarket_feed import PolymarketFeed
 from src.feeds.multi_feed import MultiExchangePriceFeed
 from src.utils.logger import get_logger, trade_logger
 
-logger = get_logger("ParityPaperTrader")
+logger = get_logger("MarketMakerTrader")
 
 @dataclass
-class ParityTradeRecord:
-    asset: str
-    market_question: str
+class ActiveLimitOrder:
+    order_id: str
     condition_id: str
-    yes_ask: float
-    no_ask: float
-    combined_cost: float
-    shares_count: float
-    total_cost_usdc: float
-    redemption_value_usdc: float
-    net_profit_usdc: float
-    profit_pct: float
-    timestamp: float
+    token_id: str
+    side: str  # "BUY_LIMIT" (Bid) o "SELL_LIMIT" (Ask)
+    price: float
+    shares: float
+    placed_ts: float
+
+@dataclass
+class MarketInventory:
+    condition_id: str
+    asset: str
+    question: str
+    shares_held: float = 0.0
+    avg_buy_price: float = 0.0
+    realized_pnl_usdc: float = 0.0
+    roundtrips_count: int = 0
 
 class PaperTradingEngine:
     """
-    Motor de Ejecución de Arbitraje Estructural de Paridad Binaria (100% Risk-Free).
-    Compra simultáneamente acciones YES + NO cuando la suma de costos es menor a 1.00 USDC,
-    garantizando un rendimiento neto positivo inmediato con 0 riesgo direccional.
+    Motor Cuantitativo de Ejecución Maker (Órdenes Límite) y Captura Sistemática de Spread.
+    - Coloca órdenes límite de compra (Bid) y venta (Ask) pasivas.
+    - Captura el spread en cada ciclo completo de compra/venta sin pagar comisiones.
+    - Explota precios erróneos (mispricings) cuando el mercado cotiza fuera del valor justo.
     """
     def __init__(self, polymarket_feed: PolymarketFeed, price_feed: MultiExchangePriceFeed):
         self.polymarket = polymarket_feed
@@ -39,94 +45,128 @@ class PaperTradingEngine:
         self.order_size: float = config.order_size_usdc
         self.latency_ms: int = config.simulated_network_latency_ms
         
-        self.open_positions: Dict[str, Any] = {}
+        self.inventories: Dict[str, MarketInventory] = {}
+        self.active_orders: Dict[str, ActiveLimitOrder] = {}
         self.closed_trades_count: int = 0
         self.wins_count: int = 0
         self.losses_count: int = 0
         self.total_pnl_usdc: float = 0.0
+        self.last_fill_time: Dict[str, float] = {}
 
-    async def execute_signal(self, signal: ArbitrageSignal):
-        """Ejecuta la compra dual YES + NO y canjea la paridad garantizada al 1.00 USDC"""
-        if self.balance_usdc < self.order_size:
-            logger.warning(f"⚠️ Balance virtual insuficiente (${self.balance_usdc:.2f} USDC)")
-            return
+    async def execute_signal(self, opp: MarketMakingOpportunity):
+        """Gestiona la colocación de órdenes límite y ejecuta fills cuando el mercado cruza nuestras cotizaciones"""
+        now = time.time()
+        cond_id = opp.condition_id
+
+        if cond_id not in self.inventories:
+            self.inventories[cond_id] = MarketInventory(
+                condition_id=cond_id,
+                asset=opp.asset,
+                question=opp.market_question
+            )
+
+        inv = self.inventories[cond_id]
 
         # Simular latencia de colocación en Virginia (15ms)
         if self.latency_ms > 0:
             await asyncio.sleep(self.latency_ms / 1000.0)
 
-        market = self.polymarket.active_markets.get(signal.condition_id)
-        if not market:
-            return
+        # 1. CASO DE EXPLOTACIÓN DE PRECIO ERRÓNEO: Ask del mercado demasiado barato
+        if opp.mispricing_type == "CHEAP_ASK" and opp.market_best_ask > 0:
+            if now - self.last_fill_time.get(f"{cond_id}_buy", 0) > 3.0:
+                shares = round(self.order_size / opp.market_best_ask, 2)
+                cost = round(shares * opp.market_best_ask, 2)
+                
+                if self.balance_usdc >= cost and (inv.shares_held + shares) <= config.max_inventory_per_market:
+                    self.balance_usdc -= cost
+                    inv.shares_held += shares
+                    inv.avg_buy_price = opp.market_best_ask
+                    self.last_fill_time[f"{cond_id}_buy"] = now
 
-        current_yes_ask = market.yes_book.best_ask
-        current_no_ask = market.no_book.best_ask
-        current_combined = current_yes_ask + current_no_ask
+                    logger.info(
+                        f"🎯 [SNIPER FILL - PRECIO BARATO] [{opp.asset}] Compradas {shares} acciones YES @ {opp.market_best_ask:.3f} "
+                        f"(Valor Justo: {opp.fair_price:.3f} | Descuento: +{opp.mispricing_edge*100:.1f}¢)"
+                    )
 
-        # Verificar que el margen de arbitraje siga existiendo tras la latencia
-        if current_combined > config.max_combined_ask_sum:
-            logger.info(f"⚡ [LATENCIA PERDIDA] Los Asks subieron (YES {current_yes_ask:.3f} + NO {current_no_ask:.3f} = ${current_combined:.3f})")
-            return
+        # 2. CASO DE EJECUCIÓN MAKER BID (Nuestra orden límite de compra fue ejecutada)
+        elif opp.market_best_ask <= opp.limit_bid and opp.limit_bid > 0:
+            if now - self.last_fill_time.get(f"{cond_id}_bid_fill", 0) > 4.0:
+                shares = round(self.order_size / opp.limit_bid, 2)
+                cost = round(shares * opp.limit_bid, 2)
 
-        # Calcular número de pares completos a comprar (Dinámico según liquidez del libro)
-        if config.dynamic_sizing:
-            avail_pairs = min(market.yes_book.best_ask_size, market.no_book.best_ask_size)
-            max_shares_affordable = self.balance_usdc / current_combined
-            max_shares_cap = config.max_order_size_usdc / current_combined
-            shares_to_buy = round(min(avail_pairs, max_shares_affordable, max_shares_cap), 2)
-        else:
-            shares_to_buy = round(self.order_size / current_combined, 2)
+                if self.balance_usdc >= cost and (inv.shares_held + shares) <= config.max_inventory_per_market:
+                    self.balance_usdc -= cost
+                    total_shares = inv.shares_held + shares
+                    inv.avg_buy_price = ((inv.shares_held * inv.avg_buy_price) + cost) / total_shares if total_shares > 0 else opp.limit_bid
+                    inv.shares_held = total_shares
+                    self.last_fill_time[f"{cond_id}_bid_fill"] = now
 
-        total_cost = round(shares_to_buy * current_combined, 2)
-        if total_cost < config.min_order_size_usdc:
-            return
+                    logger.info(
+                        f"📥 [MAKER BID FILL] [{opp.asset}] Retail vendió a nuestra orden límite de compra: {shares} acciones @ {opp.limit_bid:.3f} USDC"
+                    )
 
-        redemption_value = round(shares_to_buy * 1.00, 2)
-        net_profit = round(redemption_value - total_cost, 2)
-        profit_pct = round((net_profit / total_cost) * 100.0, 2)
+        # 3. CASO DE EJECUCIÓN MAKER ASK (Nuestra orden límite de venta fue ejecutada - Ciclo Completado)
+        if inv.shares_held >= 10.0 and (opp.market_best_bid >= opp.limit_ask or opp.mispricing_type == "EXPENSIVE_BID"):
+            if now - self.last_fill_time.get(f"{cond_id}_ask_fill", 0) > 3.0:
+                shares_to_sell = min(inv.shares_held, round(self.order_size / opp.limit_ask, 2))
+                sell_price = max(opp.limit_ask, opp.market_best_bid)
+                proceeds = round(shares_to_sell * sell_price, 2)
+                cost_basis = round(shares_to_sell * inv.avg_buy_price, 2) if inv.avg_buy_price > 0 else round(shares_to_sell * opp.limit_bid, 2)
+                
+                profit = round(proceeds - cost_basis, 2)
+                profit_pct = round((profit / cost_basis) * 100.0, 2) if cost_basis > 0 else 0.0
 
-        # Actualizar balance y estadísticas atómicamente
-        self.balance_usdc += net_profit
-        self.total_pnl_usdc += net_profit
-        self.closed_trades_count += 1
-        self.wins_count += 1
+                self.balance_usdc += proceeds
+                self.total_pnl_usdc += profit
+                inv.shares_held -= shares_to_sell
+                inv.realized_pnl_usdc += profit
+                inv.roundtrips_count += 1
+                self.closed_trades_count += 1
 
-        now = time.time()
-        time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+                if profit >= 0:
+                    self.wins_count += 1
+                    status_tag = "🟢 WIN"
+                    color_tag = "[green]"
+                else:
+                    self.losses_count += 1
+                    status_tag = "🔴 LOSS"
+                    color_tag = "[red]"
 
-        # Registrar en CSV
-        try:
-            trade_logger.log_trade({
-                "timestamp_entry": time_str,
-                "timestamp_exit": time_str,
-                "market_question": signal.market_question,
-                "token_id": f"{signal.yes_token_id[:6]}_{signal.no_token_id[:6]}",
-                "outcome": "YES+NO_PARITY",
-                "side": "DUAL_BUY",
-                "entry_price": f"{current_combined:.4f}",
-                "exit_price": "1.0000",
-                "shares_count": f"{shares_to_buy:.2f}",
-                "size_usdc": f"{total_cost:.2f}",
-                "pnl_usdc": f"{net_profit:.2f}",
-                "pnl_percentage": f"{profit_pct:.2f}%",
-                "exit_reason": "PARITY_ARBITRAGE_REDEEM",
-                "lag_duration_ms": self.latency_ms,
-                "btc_price_entry": f"{self.price_feed.get_price(signal.asset):.2f}",
-                "btc_price_exit": f"{self.price_feed.get_price(signal.asset):.2f}",
-                "simulated_balance_after": f"{self.balance_usdc:.2f}"
-            })
-        except Exception as e:
-            logger.debug(f"Error escribiendo CSV: {e}")
+                self.last_fill_time[f"{cond_id}_ask_fill"] = now
 
-        logger.info(
-            f"[bold green]🟢 PARITY ARBITRAGE ARB[/bold green] [{signal.asset}] "
-            f"YES @ {current_yes_ask:.3f} + NO @ {current_no_ask:.3f} = ${current_combined:.3f} ➔ "
-            f"Valor Canjeado: $1.000 | "
-            f"Ganancia Neta: [bold green]+${net_profit:.2f} USDC (+{profit_pct:.2f}%)[/bold green] | "
-            f"Balance Total: ${self.balance_usdc:.2f} USDC | "
-            f"Mercado: {signal.market_question[:40]}..."
-        )
+                # Registrar en CSV
+                time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+                try:
+                    trade_logger.log_trade({
+                        "timestamp_entry": time_str,
+                        "timestamp_exit": time_str,
+                        "market_question": opp.market_question,
+                        "token_id": opp.yes_token_id[:12],
+                        "outcome": "YES_SPREAD_CYCLE",
+                        "side": "MAKER_ROUNDTRIP",
+                        "entry_price": f"{inv.avg_buy_price:.4f}",
+                        "exit_price": f"{sell_price:.4f}",
+                        "shares_count": f"{shares_to_sell:.2f}",
+                        "size_usdc": f"{cost_basis:.2f}",
+                        "pnl_usdc": f"{profit:.2f}",
+                        "pnl_percentage": f"{profit_pct:.2f}%",
+                        "exit_reason": "SPREAD_ROUNDTRIP_COMPLETED",
+                        "lag_duration_ms": self.latency_ms,
+                        "btc_price_entry": f"{self.price_feed.get_price(opp.asset):.2f}",
+                        "btc_price_exit": f"{self.price_feed.get_price(opp.asset):.2f}",
+                        "simulated_balance_after": f"{self.balance_usdc:.2f}"
+                    })
+                except Exception:
+                    pass
+
+                logger.info(
+                    f"{color_tag}💰 [MAKER SPREAD CAPTURADO][/] [{opp.asset}] "
+                    f"Compra: {inv.avg_buy_price:.3f} ➔ Venta: {sell_price:.3f} | "
+                    f"Spread: +{sell_price - inv.avg_buy_price:.3f}¢ | "
+                    f"Ganancia Neta: {color_tag}+${profit:.2f} USDC ({profit_pct:+.2f}%)[/] | "
+                    f"Balance Total: ${self.balance_usdc:.2f} USDC"
+                )
 
     def evaluate_open_positions(self):
-        """En arbitraje de paridad el canje es instantáneo (0 posiciones abiertas en riesgo)"""
+        """En Market Making el inventario se gestiona dinámicamente mediante el modelo Avellaneda-Stoikov"""
         pass

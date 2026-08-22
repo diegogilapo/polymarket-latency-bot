@@ -12,8 +12,8 @@ from src.utils.logger import console
 
 class Dashboard:
     """
-    Panel visual multi-cripto en tiempo real (BTC, ETH, SOL, DOGE, XRP)
-    y Monitor de Arbitraje Estructural de Paridad Binaria 100% Risk-Free.
+    Panel visual en tiempo real para el Motor de Market Making Cuantitativo con Órdenes Límite.
+    Muestra precios spot de exchanges, cotizaciones óptimas de Bid/Ask y captura de spread.
     """
     def __init__(
         self,
@@ -46,11 +46,11 @@ class Dashboard:
     def _render(self):
         diag = self.detector.get_scan_diagnosis()
         
-        # 1. TABLA PRINCIPAL DE CRIPTOMONEDAS MONITORIZADAS
-        table_crypto = Table(title="🚀 Polymarket Arbitrage Bot - Radar Multi-Cripto", border_style="cyan", show_header=True)
+        # 1. TABLA PRINCIPAL DE CRIPTOMONEDAS
+        table_crypto = Table(title="🚀 Polymarket Quantitative Market Maker - Radar Spot", border_style="cyan", show_header=True)
         table_crypto.add_column("Activo", style="bold white", no_wrap=True)
         table_crypto.add_column("Precio Consenso", style="bright_yellow", no_wrap=True)
-        table_crypto.add_column("Variación Δ4s (%)", style="bold", no_wrap=True)
+        table_crypto.add_column("Variación Δ3s (%)", style="bold", no_wrap=True)
         table_crypto.add_column("Feeds Conectados", style="green", no_wrap=True)
 
         for asset in config.monitored_assets:
@@ -74,38 +74,46 @@ class Dashboard:
 
         console.print(table_crypto)
 
-        # 2. TABLA DE PARIDAD BINARIA ESTRUCTURAL (YES + NO)
-        table_markets = Table(title=f"🎯 Radar de Paridad Binaria 100% Cero Riesgo ({len(self.polymarket.active_markets)} Mercados)", border_style="magenta", show_header=True)
+        # 2. TABLA DE COTIZACIÓN LÍMITE Y MARKET MAKING
+        table_markets = Table(title=f"🎯 Cotización Límite y Captura de Spread ({len(self.polymarket.active_markets)} Mercados)", border_style="magenta", show_header=True)
         table_markets.add_column("Activo", style="bold yellow", no_wrap=True)
         table_markets.add_column("Mercado", style="bold white")
-        table_markets.add_column("YES Ask", style="bright_cyan", no_wrap=True)
-        table_markets.add_column("NO Ask", style="bright_cyan", no_wrap=True)
-        table_markets.add_column("Costo Par (YES+NO)", style="bold", no_wrap=True)
-        table_markets.add_column("Margen Libre Riesgo", style="bold green", no_wrap=True)
-        table_markets.add_column("Estado / Señal", no_wrap=True)
+        table_markets.add_column("Fair Value", style="bright_cyan", no_wrap=True)
+        table_markets.add_column("Límite Compra (Bid)", style="green", no_wrap=True)
+        table_markets.add_column("Límite Venta (Ask)", style="bright_red", no_wrap=True)
+        table_markets.add_column("Spread Capturado", style="bold bright_yellow", no_wrap=True)
+        table_markets.add_column("Inventario", style="dim white", no_wrap=True)
+        table_markets.add_column("Oportunidad", no_wrap=True)
 
         evals = diag.get("market_evals", [])
         if evals:
             for ev in evals[:8]:
-                cost = ev["combined_cost"]
-                margin = ev["guaranteed_margin"]
-                margin_pct = ev["margin_pct"]
-                
-                cost_color = "[bold green]" if cost < 1.00 else "[dim white]"
-                margin_str = f"+{margin_pct:.2f}% (+{margin*100:.1f}¢)" if margin > 0 else f"{margin*100:.1f}¢"
-                signal_tag = "[bold green]🟢 EJECUTAR ARB[/bold green]" if ev["is_signal"] else "[dim white]⚪ Esperar[/dim white]"
+                fair = ev["fair_price"]
+                bid = ev["our_bid"]
+                ask = ev["our_ask"]
+                spread = ev["spread_captured"]
+                inv = ev["inventory"]
+                m_type = ev["mispricing_type"]
+
+                if m_type == "CHEAP_ASK":
+                    opp_tag = "[bold green]🟢 COMPRA BARATA[/bold green]"
+                elif m_type == "EXPENSIVE_BID":
+                    opp_tag = "[bold red]🔴 VENTA CARA[/bold red]"
+                else:
+                    opp_tag = "[bright_cyan]⚡ SPREAD MAKER[/bright_cyan]"
 
                 table_markets.add_row(
                     ev.get("asset", "CRYPTO"),
-                    f"{ev['question'][:36]}",
-                    f"${ev['yes_ask']:.3f}",
-                    f"${ev['no_ask']:.3f}",
-                    f"{cost_color}${cost:.3f}[/]",
-                    f"{margin_str}",
-                    signal_tag
+                    f"{ev['question'][:32]}",
+                    f"${fair:.3f}",
+                    f"${bid:.3f}",
+                    f"${ask:.3f}",
+                    f"+{spread*100:.1f}¢",
+                    f"{inv:.0f} sh",
+                    opp_tag
                 )
         else:
-            table_markets.add_row("---", "Sincronizando libros de órdenes...", "---", "---", "---", "---", "---")
+            table_markets.add_row("---", "Sincronizando libros de órdenes...", "---", "---", "---", "---", "---", "---")
 
         console.print(table_markets)
 
@@ -117,8 +125,8 @@ class Dashboard:
         diag_content = (
             f"[bold white]Veredicto de Revisión:[/] {diag['verdict']}\n"
             f"[bold white]Balance Virtual:[/] [bold cyan]${self.trader.balance_usdc:,.2f} USDC[/bold cyan] | "
-            f"[bold white]PnL Garantizado:[/] {pnl_color}{pnl:+,.2f} USDC[/] | "
-            f"[bold white]Arbitrajes Ganados:[/] [bold green]{self.trader.closed_trades_count}[/bold green] (W: {self.trader.wins_count} | L: {self.trader.losses_count} | WinRate: [bold green]{winrate:.1f}%[/bold green]) | "
-            f"[bold white]Riesgo Direccional:[/] [bold green]0% (100% Risk-Free Parity)[/bold green]"
+            f"[bold white]PnL de Spread Acumulado:[/] {pnl_color}{pnl:+,.2f} USDC[/] | "
+            f"[bold white]Ciclos Completados:[/] [bold green]{self.trader.closed_trades_count}[/bold green] (W: {self.trader.wins_count} | L: {self.trader.losses_count} | WinRate: [bold green]{winrate:.1f}%[/bold green]) | "
+            f"[bold white]Rol de Ejecución:[/] [bold green]100% MAKER (Cero Comisiones / Spread Cobrado)[/bold green]"
         )
-        console.print(Panel(diag_content, title="🔍 Diagnóstico de Paridad y Estado de Billetera", border_style="green"))
+        console.print(Panel(diag_content, title="🔍 Diagnóstico de Market Making y Estado de Billetera", border_style="green"))
