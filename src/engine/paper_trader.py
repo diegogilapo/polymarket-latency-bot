@@ -174,6 +174,28 @@ class PaperTradingEngine:
                     f"Balance Total: ${self.balance_usdc:.2f} USDC"
                 )
 
+    def get_open_positions_summary(self) -> List[Dict[str, Any]]:
+        """Retorna el listado detallado y claro de posiciones e inventario actualmente abierto"""
+        open_pos = []
+        for cond_id, inv in self.inventories.items():
+            if inv.shares_held >= 5.0:
+                invested = round(inv.shares_held * inv.avg_buy_price, 2)
+                target_sell = round(inv.avg_buy_price + config.target_spread_cents, 3)
+                proj_profit = round(inv.shares_held * config.target_spread_cents, 2)
+                proj_pct = round((config.target_spread_cents / inv.avg_buy_price) * 100.0, 1) if inv.avg_buy_price > 0 else 0.0
+                open_pos.append({
+                    "asset": inv.asset,
+                    "question": inv.question,
+                    "condition_id": cond_id,
+                    "shares_held": round(inv.shares_held, 2),
+                    "invested_usdc": invested,
+                    "avg_buy_price": round(inv.avg_buy_price, 3),
+                    "target_sell_price": target_sell,
+                    "projected_profit_usdc": proj_profit,
+                    "projected_profit_pct": proj_pct
+                })
+        return open_pos
+
     def evaluate_open_positions(self):
         """En Market Making el inventario se gestiona dinámicamente mediante el modelo Avellaneda-Stoikov"""
         pass
