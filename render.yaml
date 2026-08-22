@@ -19,12 +19,18 @@ services:
         value: "0.030"
       - key: MIN_SPREAD_CENTS
         value: "0.018"
+      - key: AUTO_COMPOUNDING
+        value: "True"
+      - key: COMPOUNDING_ALLOCATION_PCT
+        value: "0.08"
+      - key: MIN_ORDER_SIZE_USDC
+        value: "15.0"
+      - key: MAX_ORDER_SIZE_USDC
+        value: "1500.0"
       - key: ORDER_SIZE_USDC
         value: "50.0"
-      - key: MAX_ORDER_SIZE_USDC
-        value: "250.0"
       - key: MAX_INVENTORY_PER_MARKET
-        value: "300.0"
+        value: "1000.0"
       - key: INVENTORY_SKEW_FACTOR
         value: "0.00008"
       - key: FAST_VOLATILITY_CANCEL_PCT

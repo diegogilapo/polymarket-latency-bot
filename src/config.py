@@ -38,9 +38,14 @@ class BotConfig:
     # Captura sistemática de spread y arbitraje de precios erróneos
     target_spread_cents: float = field(default_factory=lambda: get_env_float("TARGET_SPREAD_CENTS", 0.030)) # 3.0¢ de spread
     min_spread_cents: float = field(default_factory=lambda: get_env_float("MIN_SPREAD_CENTS", 0.018))    # 1.8¢ spread mínimo
-    order_size_usdc: float = field(default_factory=lambda: get_env_float("ORDER_SIZE_USDC", 50.0))       # $50 por orden límite
-    max_order_size_usdc: float = field(default_factory=lambda: get_env_float("MAX_ORDER_SIZE_USDC", 250.0))
-    max_inventory_per_market: float = field(default_factory=lambda: get_env_float("MAX_INVENTORY_PER_MARKET", 300.0))
+    order_size_usdc: float = field(default_factory=lambda: get_env_float("ORDER_SIZE_USDC", 50.0))
+    
+    # --- MÓDULO A: INTERÉS COMPUESTO AUTOMÁTICO (AUTO-COMPOUNDING) ---
+    auto_compounding: bool = field(default_factory=lambda: get_env_bool("AUTO_COMPOUNDING", True))
+    compounding_allocation_pct: float = field(default_factory=lambda: get_env_float("COMPOUNDING_ALLOCATION_PCT", 0.08)) # 8% del balance por orden límite
+    min_order_size_usdc: float = field(default_factory=lambda: get_env_float("MIN_ORDER_SIZE_USDC", 15.0))
+    max_order_size_usdc: float = field(default_factory=lambda: get_env_float("MAX_ORDER_SIZE_USDC", 1500.0))
+    max_inventory_per_market: float = field(default_factory=lambda: get_env_float("MAX_INVENTORY_PER_MARKET", 1000.0))
     inventory_skew_factor: float = field(default_factory=lambda: get_env_float("INVENTORY_SKEW_FACTOR", 0.00008))
     
     # Cancelación ultra-rápida ante volatilidad tóxica (0.15% en 3s)

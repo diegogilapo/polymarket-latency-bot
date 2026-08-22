@@ -71,10 +71,17 @@ class PaperTradingEngine:
         if self.latency_ms > 0:
             await asyncio.sleep(self.latency_ms / 1000.0)
 
+        # Calcular tamaño de la orden con Interés Compuesto Automático
+        if config.auto_compounding:
+            compounded_size = self.balance_usdc * config.compounding_allocation_pct
+            current_order_size = max(config.min_order_size_usdc, min(config.max_order_size_usdc, compounded_size))
+        else:
+            current_order_size = self.order_size
+
         # 1. CASO DE EXPLOTACIÓN DE PRECIO ERRÓNEO: Ask del mercado demasiado barato
         if opp.mispricing_type == "CHEAP_ASK" and opp.market_best_ask > 0:
             if now - self.last_fill_time.get(f"{cond_id}_buy", 0) > 3.0:
-                shares = round(self.order_size / opp.market_best_ask, 2)
+                shares = round(current_order_size / opp.market_best_ask, 2)
                 cost = round(shares * opp.market_best_ask, 2)
                 
                 if self.balance_usdc >= cost and (inv.shares_held + shares) <= config.max_inventory_per_market:
@@ -91,7 +98,7 @@ class PaperTradingEngine:
         # 2. CASO DE EJECUCIÓN MAKER BID (Nuestra orden límite de compra fue ejecutada)
         elif opp.market_best_ask <= opp.limit_bid and opp.limit_bid > 0:
             if now - self.last_fill_time.get(f"{cond_id}_bid_fill", 0) > 4.0:
-                shares = round(self.order_size / opp.limit_bid, 2)
+                shares = round(current_order_size / opp.limit_bid, 2)
                 cost = round(shares * opp.limit_bid, 2)
 
                 if self.balance_usdc >= cost and (inv.shares_held + shares) <= config.max_inventory_per_market:
@@ -108,7 +115,7 @@ class PaperTradingEngine:
         # 3. CASO DE EJECUCIÓN MAKER ASK (Nuestra orden límite de venta fue ejecutada - Ciclo Completado)
         if inv.shares_held >= 10.0 and (opp.market_best_bid >= opp.limit_ask or opp.mispricing_type == "EXPENSIVE_BID"):
             if now - self.last_fill_time.get(f"{cond_id}_ask_fill", 0) > 3.0:
-                shares_to_sell = min(inv.shares_held, round(self.order_size / opp.limit_ask, 2))
+                shares_to_sell = min(inv.shares_held, round(current_order_size / opp.limit_ask, 2))
                 sell_price = max(opp.limit_ask, opp.market_best_bid)
                 proceeds = round(shares_to_sell * sell_price, 2)
                 cost_basis = round(shares_to_sell * inv.avg_buy_price, 2) if inv.avg_buy_price > 0 else round(shares_to_sell * opp.limit_bid, 2)
