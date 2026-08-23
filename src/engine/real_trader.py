@@ -66,10 +66,10 @@ class RealTradingEngine:
             except Exception as e:
                 logger.debug(f"Aviso al consultar proxyWallet en Gamma API: {e}")
 
-            # Usar dirección funder configurada o proxyWallet detectada
+            # Usar dirección funder y tipo de firma configurados
             configured_funder = config.polymarket_funder_address.strip()
             active_funder = configured_funder or proxy_wallet or self.funder_address
-            sig_type = 2 if active_funder.lower() != self.funder_address.lower() else (2 if proxy_wallet else 0)
+            sig_type = config.polymarket_signature_type
             
             logger.info(f"🏛️ Polymarket Funder Address activo: {active_funder} (Firma Tipo {sig_type})")
 
@@ -96,6 +96,15 @@ class RealTradingEngine:
                 creds = self.client.create_or_derive_api_creds()
                 self.client.set_api_creds(creds)
                 logger.info(f"🟢 Credenciales CLOB generadas y autenticadas con éxito (API Key: {creds.api_key[:8]}...)")
+
+            # Forzar sincronización de balance e indexación en el CLOB
+            try:
+                from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+                params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig_type)
+                self.client.update_balance_allowance(params=params)
+                logger.info("🟢 Sincronización e indexación de balance activada en Polymarket CLOB.")
+            except Exception as e:
+                logger.debug(f"Aviso al forzar indexación de balance: {e}")
 
             self._is_initialized = True
             self.update_balance()
