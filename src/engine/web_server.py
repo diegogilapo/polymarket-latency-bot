@@ -34,11 +34,9 @@ class BotWebServer:
         self.site = None
         self.port = int(os.getenv("PORT", "10000"))
 
-        # Rutas HTTP
+        # Rutas HTTP (add_get maneja automáticamente peticiones GET y HEAD)
         self.app.router.add_get("/health", self.handle_health)
-        self.app.router.add_head("/health", self.handle_health)
         self.app.router.add_get("/", self.handle_dashboard)
-        self.app.router.add_head("/", self.handle_dashboard)
         self.app.router.add_get("/api/status", self.handle_api_status)
 
     async def handle_health(self, request):
