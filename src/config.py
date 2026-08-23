@@ -29,9 +29,9 @@ def get_env_list(name: str, default: List[str] = None) -> List[str]:
 
 @dataclass
 class BotConfig:
-    # Modo de Operación (Dinero Real automático si hay clave privada)
+    # Modo de Operación (Automático a Dinero Real si existe POLYMARKET_PRIVATE_KEY)
     simulation_mode: bool = field(default_factory=lambda: get_env_bool("SIMULATION_MODE", False if os.getenv("POLYMARKET_PRIVATE_KEY") else True))
-    simulation_initial_balance: float = field(default_factory=lambda: get_env_float("SIMULATION_INITIAL_BALANCE", 48.99))
+    simulation_initial_balance: float = field(default_factory=lambda: get_env_float("SIMULATION_INITIAL_BALANCE", 1000.0))
     simulated_network_latency_ms: int = field(default_factory=lambda: get_env_int("SIMULATED_NETWORK_LATENCY_MS", 15))
 
     # --- ESTRATEGIA DE MARKET MAKING CUANTITATIVO CON ÓRDENES LÍMITE (MAKER ONLY) ---

@@ -12,7 +12,7 @@ services:
       - key: SIMULATION_MODE
         value: "False"
       - key: SIMULATION_INITIAL_BALANCE
-        value: "48.99"
+        value: "1000.0"
       - key: POLYMARKET_FUNDER_ADDRESS
         value: "0xbb9C2007dADB32d6c9c33d7CD630A929DcC5eaaf"
       - key: SIMULATED_NETWORK_LATENCY_MS
