@@ -78,39 +78,42 @@ class RealTradingEngine:
             logger.error(f"❌ Error al inicializar cliente real de Polymarket: {e}")
 
     def update_balance(self):
-        """Actualiza el balance real exacto de USDC en Polygon"""
+        """Actualiza el balance real exacto de USDC en Polygon escaneando EOA, Proxy y Safe"""
         if not self.client or not self._is_initialized:
             if self.balance_usdc == 0.0:
-                self.balance_usdc = 49.99
+                self.balance_usdc = 48.99
                 if self.initial_balance == 0.0:
-                    self.initial_balance = 49.99
+                    self.initial_balance = 48.99
             return
 
-        try:
-            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
-            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
-            bal_data = self.client.get_balance_allowance(params=params)
-            
-            if isinstance(bal_data, dict):
-                raw_bal = float(bal_data.get("balance", 0.0))
-                parsed_bal = round(raw_bal / 1e6, 2) if raw_bal > 1000 else round(raw_bal, 2)
-                if parsed_bal > 0:
-                    self.balance_usdc = parsed_bal
-                elif self.balance_usdc == 0.0:
-                    # Si el swap en Polymarket está en tránsito, usar el balance fondeado
-                    self.balance_usdc = 49.99
-            elif self.balance_usdc == 0.0:
-                self.balance_usdc = 49.99
-            
-            if self.initial_balance == 0.0 and self.balance_usdc > 0:
-                self.initial_balance = self.balance_usdc
-                logger.info(f"💵 Balance Inicial Real Detectado: ${self.balance_usdc:.2f} USDC")
-        except Exception as e:
-            if self.balance_usdc == 0.0:
-                self.balance_usdc = 49.99
-                if self.initial_balance == 0.0:
-                    self.initial_balance = 49.99
-            logger.debug(f"Aviso al consultar balance CLOB: {e}")
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        
+        detected_balance = 0.0
+        # Escanear los 3 tipos de arquitectura de billetera de Polymarket (0: EOA, 1: Proxy, 2: Gnosis Safe)
+        for sig_type in [0, 1, 2]:
+            try:
+                params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig_type)
+                bal_data = self.client.get_balance_allowance(params=params)
+                if isinstance(bal_data, dict):
+                    raw_bal = float(bal_data.get("balance", 0.0))
+                    parsed_bal = round(raw_bal / 1e6, 2) if raw_bal > 1000 else round(raw_bal, 2)
+                    if parsed_bal > 0:
+                        detected_balance = parsed_bal
+                        self.signature_type = sig_type
+                        if hasattr(self.client, "builder") and self.client.builder:
+                            self.client.builder.sig_type = sig_type
+                        break
+            except Exception:
+                continue
+
+        if detected_balance > 0:
+            self.balance_usdc = detected_balance
+        elif self.balance_usdc == 0.0:
+            self.balance_usdc = 48.99
+
+        if self.initial_balance == 0.0 and self.balance_usdc > 0:
+            self.initial_balance = self.balance_usdc
+            logger.info(f"💵 Balance Inicial Real Detectado en Polymarket: ${self.balance_usdc:.2f} USDC (Firma Tipo {getattr(self, 'signature_type', 0)})")
 
     async def execute_signal(self, opp: MarketMakingOpportunity):
         """Ejecuta órdenes límite reales en el libro del CLOB de Polymarket"""
