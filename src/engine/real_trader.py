@@ -108,6 +108,26 @@ class RealTradingEngine:
 
         from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
         
+        # Si aún no tenemos proxyWallet o balance es 0, intentar re-consultar Gamma API
+        if not getattr(self, "proxy_wallet", None):
+            try:
+                import urllib.request
+                import json
+                url = f"https://gamma-api.polymarket.com/users?address={self.funder_address.lower()}"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    users_data = json.loads(resp.read())
+                    if isinstance(users_data, list) and len(users_data) > 0:
+                        self.proxy_wallet = users_data[0].get("proxyWallet")
+                    elif isinstance(users_data, dict):
+                        self.proxy_wallet = users_data.get("proxyWallet")
+                if self.proxy_wallet:
+                    logger.info(f"🏛️ Proxy Wallet vinculada dinámicamente: {self.proxy_wallet}")
+                    if hasattr(self.client, "builder") and self.client.builder:
+                        self.client.builder.funder = self.proxy_wallet
+            except Exception as e:
+                logger.debug(f"Aviso al consultar Gamma API: {e}")
+
         detected_balance = 0.0
         # Escanear los 3 tipos de arquitectura de billetera de Polymarket (0: EOA, 1: Proxy, 2: Gnosis Safe)
         for sig_type in [0, 1, 2]:
