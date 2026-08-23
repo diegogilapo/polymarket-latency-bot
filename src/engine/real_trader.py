@@ -214,11 +214,17 @@ class RealTradingEngine:
                         logger.error(f"Error al procesar orden de compra real: {e}")
 
     def evaluate_open_positions(self):
-        """Escaneo en tiempo real de salidas con ganancia obligatoria en modo real"""
+        """Escaneo en tiempo real de salidas con ganancia obligatoria en modo real y refresco de saldo"""
         if not self._is_initialized or not self.client:
             return
 
         now = time.time()
+        
+        # Refrescar balance de la cuenta cada 5 segundos
+        if now - getattr(self, "_last_balance_check", 0.0) > 5.0:
+            self._last_balance_check = now
+            self.update_balance()
+
         for cond_id, inv in list(self.inventories.items()):
             if inv.shares_held < 5.0:
                 continue
