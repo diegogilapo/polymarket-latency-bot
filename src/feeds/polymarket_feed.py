@@ -45,6 +45,26 @@ def detect_market_asset(text: str) -> Optional[str]:
         return "DOGE"
     elif re.search(r"\b(ripple|xrp)\b", t):
         return "XRP"
+    elif re.search(r"\b(cardano|ada)\b", t):
+        return "ADA"
+    elif re.search(r"\b(avalanche|avax)\b", t):
+        return "AVAX"
+    elif re.search(r"\b(chainlink|link)\b", t):
+        return "LINK"
+    elif re.search(r"\b(binance|bnb)\b", t):
+        return "BNB"
+    elif re.search(r"\b(near protocol|near)\b", t):
+        return "NEAR"
+    elif re.search(r"\b(sui)\b", t):
+        return "SUI"
+    elif re.search(r"\b(pepe)\b", t):
+        return "PEPE"
+    elif re.search(r"\b(shiba inu|shib|shiba)\b", t):
+        return "SHIB"
+    elif re.search(r"\b(litecoin|ltc)\b", t):
+        return "LTC"
+    elif re.search(r"\b(polkadot|dot)\b", t):
+        return "DOT"
     return None
 
 @dataclass

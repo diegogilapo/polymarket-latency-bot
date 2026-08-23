@@ -163,7 +163,17 @@ def run_realistic_backtest(initial_balance: float = 50.0):
         "ETH":  {"base_daily_cycles": 8},
         "SOL":  {"base_daily_cycles": 9},
         "DOGE": {"base_daily_cycles": 7},
-        "XRP":  {"base_daily_cycles": 6}
+        "XRP":  {"base_daily_cycles": 6},
+        "ADA":  {"base_daily_cycles": 5},
+        "AVAX": {"base_daily_cycles": 5},
+        "LINK": {"base_daily_cycles": 5},
+        "BNB":  {"base_daily_cycles": 6},
+        "NEAR": {"base_daily_cycles": 4},
+        "SUI":  {"base_daily_cycles": 5},
+        "PEPE": {"base_daily_cycles": 6},
+        "SHIB": {"base_daily_cycles": 5},
+        "LTC":  {"base_daily_cycles": 4},
+        "DOT":  {"base_daily_cycles": 4}
     }
 
     engine = RealisticMarketMakerSimulator(

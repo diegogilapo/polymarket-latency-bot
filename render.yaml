@@ -36,6 +36,6 @@ services:
       - key: FAST_VOLATILITY_CANCEL_PCT
         value: "0.0015"
       - key: MONITORED_ASSETS
-        value: "BTC,ETH,SOL,DOGE,XRP"
+        value: "BTC,ETH,SOL,DOGE,XRP,ADA,AVAX,LINK,BNB,NEAR,SUI,PEPE,SHIB,LTC,DOT"
       - key: POLYMARKET_SEARCH_KEYWORDS
-        value: "Bitcoin,BTC,Ethereum,ETH,Solana,SOL,Dogecoin,DOGE,XRP,Crypto,Price,Hit,Reach,Above"
+        value: "Bitcoin,BTC,Ethereum,ETH,Solana,SOL,Dogecoin,DOGE,XRP,Cardano,ADA,Avalanche,AVAX,Chainlink,LINK,BNB,Near,Sui,Pepe,Shiba,SHIB,Litecoin,LTC,Polkadot,DOT,Crypto,Price,Hit,Reach,Above,Dip"

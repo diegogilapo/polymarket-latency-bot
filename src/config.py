@@ -52,12 +52,22 @@ class BotConfig:
     fast_volatility_cancel_pct: float = field(default_factory=lambda: get_env_float("FAST_VOLATILITY_CANCEL_PCT", 0.0015))
     momentum_window_seconds: float = field(default_factory=lambda: get_env_float("MOMENTUM_WINDOW_SECONDS", 3.0))
 
-    # Activos Cripto Monitorizados
-    monitored_assets: List[str] = field(default_factory=lambda: get_env_list("MONITORED_ASSETS", ["BTC", "ETH", "SOL", "DOGE", "XRP"]))
+    # Activos Cripto Monitorizados (15 Criptomonedas de Mayor Liquidez)
+    monitored_assets: List[str] = field(
+        default_factory=lambda: get_env_list("MONITORED_ASSETS", [
+            "BTC", "ETH", "SOL", "DOGE", "XRP",
+            "ADA", "AVAX", "LINK", "BNB", "NEAR",
+            "SUI", "PEPE", "SHIB", "LTC", "DOT"
+        ])
+    )
 
-    # Búsqueda en Polymarket
+    # Búsqueda y Filtrado en Polymarket
     polymarket_search_keywords: List[str] = field(
-        default_factory=lambda: get_env_list("POLYMARKET_SEARCH_KEYWORDS", ["Bitcoin", "BTC", "Ethereum", "ETH", "Solana", "SOL", "Dogecoin", "DOGE", "XRP", "Crypto", "Price", "Hit", "Reach", "Above", "Dip"])
+        default_factory=lambda: get_env_list("POLYMARKET_SEARCH_KEYWORDS", [
+            "Bitcoin", "BTC", "Ethereum", "ETH", "Solana", "SOL", "Dogecoin", "DOGE", "XRP", "Ripple",
+            "Cardano", "ADA", "Avalanche", "AVAX", "Chainlink", "LINK", "BNB", "Binance", "Near",
+            "Sui", "Pepe", "Shiba", "SHIB", "Litecoin", "LTC", "Polkadot", "DOT", "Crypto", "Price", "Hit", "Reach", "Above", "Dip"
+        ])
     )
 
     # Endpoints de API y WebSockets

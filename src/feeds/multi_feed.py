@@ -11,28 +11,55 @@ from src.utils.fast_json import fast_loads, fast_dumps
 
 logger = get_logger("MultiAssetFeed")
 
-# Mapeo de símbolos por exchange
+# Mapeo de símbolos por exchange (15 Criptomonedas)
 ASSET_MAPPINGS = {
     "Coinbase": {
         "BTC-USD": "BTC",
         "ETH-USD": "ETH",
         "SOL-USD": "SOL",
         "DOGE-USD": "DOGE",
-        "XRP-USD": "XRP"
+        "XRP-USD": "XRP",
+        "ADA-USD": "ADA",
+        "AVAX-USD": "AVAX",
+        "LINK-USD": "LINK",
+        "NEAR-USD": "NEAR",
+        "SUI-USD": "SUI",
+        "SHIB-USD": "SHIB",
+        "LTC-USD": "LTC",
+        "DOT-USD": "DOT"
     },
     "Kraken": {
         "XBT/USD": "BTC",
         "ETH/USD": "ETH",
         "SOL/USD": "SOL",
         "XDG/USD": "DOGE",
-        "XRP/USD": "XRP"
+        "XRP/USD": "XRP",
+        "ADA/USD": "ADA",
+        "AVAX/USD": "AVAX",
+        "LINK/USD": "LINK",
+        "NEAR/USD": "NEAR",
+        "SUI/USD": "SUI",
+        "PEPE/USD": "PEPE",
+        "SHIB/USD": "SHIB",
+        "LTC/USD": "LTC",
+        "DOT/USD": "DOT"
     },
     "Binance.US": {
         "BTCUSDT": "BTC",
         "ETHUSDT": "ETH",
         "SOLUSDT": "SOL",
         "DOGEUSDT": "DOGE",
-        "XRPUSDT": "XRP"
+        "XRPUSDT": "XRP",
+        "ADAUSDT": "ADA",
+        "AVAXUSDT": "AVAX",
+        "LINKUSDT": "LINK",
+        "BNBUSDT": "BNB",
+        "NEARUSDT": "NEAR",
+        "SUIUSDT": "SUI",
+        "PEPEUSDT": "PEPE",
+        "SHIBUSDT": "SHIB",
+        "LTCUSDT": "LTC",
+        "DOTUSDT": "DOT"
     }
 }
 
@@ -141,14 +168,14 @@ class MultiExchangePriceFeed:
         logger.info("Deteniendo feeds multi-activo...")
 
     async def _feed_coinbase(self):
-        product_ids = [f"{a}-USD" for a in self.assets]
+        product_ids = list(ASSET_MAPPINGS["Coinbase"].keys())
         while self._running:
             try:
                 async with websockets.connect(config.coinbase_ws_url, ping_interval=20, ping_timeout=10) as ws:
                     sub = {"type": "subscribe", "product_ids": product_ids, "channels": ["ticker"]}
                     await ws.send(fast_dumps(sub))
                     self.is_connected["Coinbase"] = True
-                    logger.info("🟢 Coinbase WS conectado con parser SIMD")
+                    logger.info(f"🟢 Coinbase WS conectado con parser SIMD ({len(product_ids)} activos)")
                     async for msg in ws:
                         if not self._running:
                             break
@@ -163,19 +190,14 @@ class MultiExchangePriceFeed:
                 await asyncio.sleep(3.0)
 
     async def _feed_kraken(self):
-        kraken_pairs = []
-        for a in self.assets:
-            if a == "BTC": kraken_pairs.append("XBT/USD")
-            elif a == "DOGE": kraken_pairs.append("XDG/USD")
-            else: kraken_pairs.append(f"{a}/USD")
-
+        kraken_pairs = list(ASSET_MAPPINGS["Kraken"].keys())
         while self._running:
             try:
                 async with websockets.connect(config.kraken_ws_url, ping_interval=20, ping_timeout=10) as ws:
                     sub = {"event": "subscribe", "pair": kraken_pairs, "subscription": {"name": "ticker"}}
                     await ws.send(fast_dumps(sub))
                     self.is_connected["Kraken"] = True
-                    logger.info("🟢 Kraken WS conectado con parser SIMD")
+                    logger.info(f"🟢 Kraken WS conectado con parser SIMD ({len(kraken_pairs)} activos)")
                     async for msg in ws:
                         if not self._running:
                             break
@@ -191,13 +213,13 @@ class MultiExchangePriceFeed:
                 await asyncio.sleep(3.0)
 
     async def _feed_binance_us(self):
-        streams = [f"{a.lower()}usdt@ticker" for a in self.assets]
+        streams = [f"{k.lower()}@ticker" for k in ASSET_MAPPINGS["Binance.US"].keys()]
         combined_url = f"wss://stream.binance.us:9443/stream?streams={'/'.join(streams)}"
         while self._running:
             try:
                 async with websockets.connect(combined_url, ping_interval=20, ping_timeout=10) as ws:
                     self.is_connected["Binance.US"] = True
-                    logger.info("🟢 Binance.US WS conectado con parser SIMD")
+                    logger.info(f"🟢 Binance.US WS conectado con parser SIMD ({len(streams)} activos)")
                     async for msg in ws:
                         if not self._running:
                             break
