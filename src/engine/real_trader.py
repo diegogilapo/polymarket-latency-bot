@@ -77,19 +77,15 @@ class RealTradingEngine:
         except Exception as e:
             logger.error(f"❌ Error al inicializar cliente real de Polymarket: {e}")
 
-    def update_balance(self):
-        """Actualiza el balance real de USDC en la cuenta"""
-        if not self.client or not self._is_initialized:
-            return
         try:
-            # Obtener balance y allowance de Polymarket
-            bal_data = self.client.get_balance_allowance()
+            # Obtener balance y allowance de USDC (Collateral) en Polymarket
+            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            bal_data = self.client.get_balance_allowance(params=params)
             if isinstance(bal_data, dict):
                 raw_bal = float(bal_data.get("balance", 0.0))
                 # USDC en Polygon tiene 6 decimales
                 self.balance_usdc = round(raw_bal / 1e6 if raw_bal > 10000 else raw_bal, 2)
-            else:
-                self.balance_usdc = 100.0 # Fallback informativo
             
             if self.initial_balance == 0.0 and self.balance_usdc > 0:
                 self.initial_balance = self.balance_usdc
