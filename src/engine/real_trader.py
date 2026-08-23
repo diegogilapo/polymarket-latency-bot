@@ -103,7 +103,7 @@ class RealTradingEngine:
             logger.error(f"❌ Error al inicializar cliente real de Polymarket: {e}")
 
     def update_balance(self):
-        """Actualiza el balance real exacto de USDC en Polygon escaneando On-Chain RPC, Data API y CLOB API"""
+        """Actualiza el balance real exacto de USDC en Polygon escaneando Data API oficial de Polymarket, CLOB API y RPC"""
         if not self.client or not self._is_initialized:
             return
 
@@ -111,82 +111,70 @@ class RealTradingEngine:
         import json
         from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
 
-        active_funder = getattr(self, "proxy_wallet", None) or config.polymarket_funder_address.strip() or self.funder_address
-        addresses_to_check = list({addr for addr in [active_funder, self.funder_address, "0xbb9C2007dADB32d6c9c33d7CD630A929DcC5eaaf"] if addr})
+        target_address = config.polymarket_funder_address.strip() or getattr(self, "proxy_wallet", None) or self.funder_address or "0xbb9C2007dADB32d6c9c33d7CD630A929DcC5eaaf"
         
-        # 1. Escanear directamente la Blockchain de Polygon vía RPC (USDC.e y USDC Nativo)
-        usdc_contracts = [
-            "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", # Bridged USDC.e (Polymarket CTF)
-            "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", # Native USDC
-            "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"  # USDT (Polygon)
-        ]
-        polygon_rpcs = [
-            "https://polygon-bor-rpc.publicnode.com",
-            "https://1rpc.io/matic",
-            "https://rpc.ankr.com/polygon",
-            "https://polygon.llamarpc.com"
-        ]
+        detected_balance = 0.0
 
-        on_chain_balance = 0.0
-        for target_addr in addresses_to_check:
-            clean_addr = target_addr.lower().replace("0x", "").zfill(64)
-            call_data = "0x70a08231" + clean_addr # balanceOf(address)
-            for contract in usdc_contracts:
-                payload = {
-                    "jsonrpc": "2.0",
-                    "method": "eth_call",
-                    "params": [{"to": contract, "data": call_data}, "latest"],
-                    "id": 1
-                }
-                for rpc in polygon_rpcs:
+        # 1. Consultar Data API oficial de Polymarket (la misma que alimenta la app web/móvil)
+        try:
+            url = f"https://data-api.polymarket.com/value?user={target_address.lower()}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
+                val_data = json.loads(resp.read())
+                if isinstance(val_data, dict):
+                    val = float(val_data.get("value", 0.0) or val_data.get("total", 0.0) or val_data.get("cash", 0.0))
+                    if val > 0:
+                        detected_balance = round(val, 2)
+                        logger.info(f"📊 [DATA API POLYMARKET] Saldo Detectado para {target_address[:10]}...: ${detected_balance:.2f} USD")
+        except Exception as e:
+            logger.debug(f"Aviso Data API Polymarket: {e}")
+
+        # 2. Consultar CLOB API de Polymarket con los 3 tipos de firma (Gnosis Safe, Proxy, EOA)
+        if detected_balance == 0.0:
+            for sig_type in [2, 1, 0]:
+                try:
+                    params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig_type)
+                    bal_data = self.client.get_balance_allowance(params=params)
+                    if isinstance(bal_data, dict):
+                        raw_bal = float(bal_data.get("balance", 0.0))
+                        parsed_bal = round(raw_bal / 1e6, 2) if raw_bal > 1000 else round(raw_bal, 2)
+                        if parsed_bal > 0:
+                            detected_balance = parsed_bal
+                            self.signature_type = sig_type
+                            if hasattr(self.client, "builder") and self.client.builder:
+                                self.client.builder.sig_type = sig_type
+                            logger.info(f"📊 [CLOB API POLYMARKET] Saldo Detectado con Firma Tipo {sig_type}: ${detected_balance:.2f} USDC")
+                            break
+                except Exception:
+                    continue
+
+        # 3. Consultar Contratos ERC20 de Polygon On-Chain (USDC.e / USDC / USDT)
+        if detected_balance == 0.0:
+            for contract in ["0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"]:
+                for addr in [target_address, self.funder_address]:
+                    clean_addr = addr.lower().replace("0x", "").zfill(64)
+                    call_data = "0x70a08231" + clean_addr
+                    payload = {"jsonrpc": "2.0", "method": "eth_call", "params": [{"to": contract, "data": call_data}, "latest"], "id": 1}
                     try:
-                        req = urllib.request.Request(
-                            rpc,
-                            data=json.dumps(payload).encode(),
-                            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
-                        )
-                        with urllib.request.urlopen(req, timeout=2.5) as resp:
+                        req = urllib.request.Request("https://polygon-bor-rpc.publicnode.com", data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
+                        with urllib.request.urlopen(req, timeout=2.0) as resp:
                             res = json.loads(resp.read())
-                            hex_val = res.get("result", "0x0")
-                            int_val = int(hex_val, 16)
+                            int_val = int(res.get("result", "0x0"), 16)
                             if int_val > 0:
-                                parsed = round(int_val / 1e6, 2)
-                                if parsed > on_chain_balance:
-                                    on_chain_balance = parsed
-                                    break
+                                detected_balance = round(int_val / 1e6, 2)
+                                logger.info(f"📊 [ON-CHAIN POLYGON] Saldo Detectado en Contrato {contract[:8]}...: ${detected_balance:.2f} USDC")
+                                break
                     except Exception:
                         continue
-                if on_chain_balance > 0:
+                if detected_balance > 0:
                     break
-            if on_chain_balance > 0:
-                break
 
-        # 2. Escanear CLOB API de Polymarket con los 3 tipos de firma
-        clob_balance = 0.0
-        for sig_type in [2, 1, 0]:
-            try:
-                params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig_type)
-                bal_data = self.client.get_balance_allowance(params=params)
-                if isinstance(bal_data, dict):
-                    raw_bal = float(bal_data.get("balance", 0.0))
-                    parsed_bal = round(raw_bal / 1e6, 2) if raw_bal > 1000 else round(raw_bal, 2)
-                    if parsed_bal > 0:
-                        clob_balance = parsed_bal
-                        self.signature_type = sig_type
-                        if hasattr(self.client, "builder") and self.client.builder:
-                            self.client.builder.sig_type = sig_type
-                        break
-            except Exception:
-                continue
-
-        # Sincronizar el saldo más alto detectado en tiempo real
-        detected_balance = max(on_chain_balance, clob_balance)
         if detected_balance > 0:
             self.balance_usdc = detected_balance
 
         if self.initial_balance == 0.0 and self.balance_usdc > 0:
             self.initial_balance = self.balance_usdc
-            logger.info(f"💵 Balance Real Detectado en Polygon/Polymarket: ${self.balance_usdc:.2f} USDC (Firma Tipo {getattr(self, 'signature_type', 2)})")
+            logger.info(f"💵 Balance Real Detectado en Polymarket: ${self.balance_usdc:.2f} USDC")
 
     async def execute_signal(self, opp: MarketMakingOpportunity):
         """Ejecuta órdenes límite reales en el libro del CLOB de Polymarket"""
