@@ -66,11 +66,12 @@ class RealTradingEngine:
             except Exception as e:
                 logger.debug(f"Aviso al consultar proxyWallet en Gamma API: {e}")
 
-            # Usar proxyWallet detectada o dirección funder configurada
-            active_funder = proxy_wallet or config.polymarket_funder_address.strip() or self.funder_address
-            sig_type = 2 if proxy_wallet else 0
-            if proxy_wallet:
-                logger.info(f"🏛️ Proxy Wallet de Polymarket vinculada con éxito: {proxy_wallet} (Gnosis Safe Tipo 2)")
+            # Usar dirección funder configurada o proxyWallet detectada
+            configured_funder = config.polymarket_funder_address.strip()
+            active_funder = configured_funder or proxy_wallet or self.funder_address
+            sig_type = 2 if active_funder.lower() != self.funder_address.lower() else (2 if proxy_wallet else 0)
+            
+            logger.info(f"🏛️ Polymarket Funder Address activo: {active_funder} (Firma Tipo {sig_type})")
 
             # Inicializar cliente CLOB en Polygon (Chain ID 137)
             self.client = ClobClient(
