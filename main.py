@@ -31,12 +31,17 @@ from src.feeds.multi_feed import MultiExchangePriceFeed
 from src.feeds.polymarket_feed import PolymarketFeed
 from src.engine.arbitrage_detector import ArbitrageDetector
 from src.engine.paper_trader import PaperTradingEngine
+from src.engine.real_trader import RealTradingEngine
 from src.engine.dashboard import Dashboard
 from src.engine.web_server import BotWebServer
 
 logger = get_logger("Main")
 
 class BotApp:
+    """
+    Aplicación Principal del Bot de Arbitraje de Latencia y Market Making para Polymarket:
+    Soporta ejecución tanto en Modo Simulado (Paper Trading) como en Modo Real (CLOB Polygon).
+    """
     def __init__(self):
         self.price_feed = MultiExchangePriceFeed()
         self.polymarket_feed = PolymarketFeed()
@@ -46,22 +51,31 @@ class BotApp:
             polymarket=self.polymarket_feed
         )
         
-        self.paper_trader = PaperTradingEngine(
-            polymarket_feed=self.polymarket_feed,
-            price_feed=self.price_feed
-        )
+        # Seleccionar motor de trading según el modo configurado
+        if config.simulation_mode:
+            logger.info("🧪 Inicializando Motor de Simulación (Paper Trading)")
+            self.trader = PaperTradingEngine(
+                polymarket_feed=self.polymarket_feed,
+                price_feed=self.price_feed
+            )
+        else:
+            logger.info("🔴 Inicializando Motor de Trading en DINERO REAL (Polymarket CLOB)")
+            self.trader = RealTradingEngine(
+                price_feed=self.price_feed,
+                polymarket=self.polymarket_feed
+            )
         
         self.dashboard = Dashboard(
             price_feed=self.price_feed,
             polymarket=self.polymarket_feed,
-            trader=self.paper_trader,
+            trader=self.trader,
             detector=self.arbitrage_detector
         )
 
         self.web_server = BotWebServer(
             price_feed=self.price_feed,
             polymarket=self.polymarket_feed,
-            trader=self.paper_trader,
+            trader=self.trader,
             detector=self.arbitrage_detector
         )
         
@@ -69,20 +83,16 @@ class BotApp:
 
     async def _strategy_loop(self):
         """Bucle de alta frecuencia para evaluar señales y gestionar posiciones abiertas"""
-        logger.info("⚡ Bucle de estrategia de arbitraje iniciado (50ms scan loop).")
+        logger.info("⚡ Bucle de estrategia de market making iniciado (50ms scan loop).")
         while self._running:
             try:
-                # 1. Evaluar si hay desfases explotables
+                # 1. Evaluar si hay desfases o spreads explotables
                 signals = self.arbitrage_detector.check_opportunities()
                 for sig in signals:
-                    if config.simulation_mode:
-                        # Ejecutar en Paper Trading
-                        asyncio.create_task(self.paper_trader.execute_signal(sig))
-                    else:
-                        logger.warning(f"⚠️ Señal detectada en modo real: {sig}")
+                    asyncio.create_task(self.trader.execute_signal(sig))
 
-                # 2. Gestionar salidas de posiciones abiertas (TP / SL / Timeout)
-                self.paper_trader.evaluate_open_positions()
+                # 2. Gestionar salidas de posiciones abiertas (Strict Profit Guard)
+                self.trader.evaluate_open_positions()
 
                 # Escaneo cada 50 milisegundos
                 await asyncio.sleep(0.05)
@@ -94,8 +104,8 @@ class BotApp:
         self._running = True
         console.print(
             f"[bold cyan]=====================================================\n"
-            f"   POLYMARKET BTC LATENCY ARBITRAGE BOT v1.0.0\n"
-            f"   Modo: {'[green]DEMO / PAPER TRADING (0 Riesgo)[/green]' if config.simulation_mode else '[red]DINERO REAL[/red]'}\n"
+            f"   POLYMARKET QUANTITATIVE MARKET MAKER v2.0.0\n"
+            f"   Modo: {'[green]DEMO / PAPER TRADING (0 Riesgo)[/green]' if config.simulation_mode else '[bold red]🔴 DINERO REAL (Polymarket CLOB Polygon)[/bold red]'}\n"
             f"=====================================================[/bold cyan]"
         )
 
@@ -110,39 +120,34 @@ class BotApp:
         try:
             await asyncio.gather(*tasks)
         except asyncio.CancelledError:
-            logger.info("Tareas canceladas por detención del bot.")
+            pass
 
     async def stop(self):
-        logger.info("Cerrando feeds y guardando estado...")
+        logger.info("Cerrando servicios del bot...")
         self._running = False
         await self.price_feed.stop()
         await self.polymarket_feed.stop()
         await self.dashboard.stop()
         await self.web_server.stop()
-
-def handle_exit(loop, app):
-    logger.info("Recibida señal de terminación (SIGINT/SIGTERM). Apagando bot...")
-    asyncio.create_task(app.stop())
+        logger.info("Todos los servicios detenidos correctamente.")
 
 async def main():
     app = BotApp()
-    
+
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, lambda: handle_exit(loop, app))
-        except NotImplementedError:
-            pass
+
+    def _signal_handler():
+        logger.info("Señal de terminación recibida. Iniciando apagado...")
+        asyncio.create_task(app.stop())
+
+    if sys.platform != "win32":
+        for s in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(s, _signal_handler)
 
     try:
         await app.start()
-    except KeyboardInterrupt:
-        logger.info("Detención manual por teclado.")
-    finally:
+    except (KeyboardInterrupt, SystemExit):
         await app.stop()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    asyncio.run(main())
