@@ -50,11 +50,35 @@ class RealTradingEngine:
             self.funder_address = account.address
             logger.info(f"🔑 Billetera Real Inicializada: {self.funder_address}")
 
+            # Resolver dirección Proxy o Safe en Polymarket vía Gamma API en Virginia
+            proxy_wallet = None
+            try:
+                import urllib.request
+                import json
+                url = f"https://gamma-api.polymarket.com/users?address={self.funder_address.lower()}"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    users_data = json.loads(resp.read())
+                    if isinstance(users_data, list) and len(users_data) > 0:
+                        proxy_wallet = users_data[0].get("proxyWallet")
+                    elif isinstance(users_data, dict):
+                        proxy_wallet = users_data.get("proxyWallet")
+            except Exception as e:
+                logger.debug(f"Aviso al consultar proxyWallet en Gamma API: {e}")
+
+            # Usar proxyWallet detectada o dirección funder configurada
+            active_funder = proxy_wallet or config.polymarket_funder_address.strip() or self.funder_address
+            sig_type = 2 if proxy_wallet else 0
+            if proxy_wallet:
+                logger.info(f"🏛️ Proxy Wallet de Polymarket vinculada con éxito: {proxy_wallet} (Gnosis Safe Tipo 2)")
+
             # Inicializar cliente CLOB en Polygon (Chain ID 137)
             self.client = ClobClient(
                 host=config.polymarket_clob_http_url,
                 chain_id=137,
-                key=self.private_key
+                key=self.private_key,
+                signature_type=sig_type,
+                funder=active_funder
             )
 
             # Derivar o crear credenciales de API directamente en el servidor
