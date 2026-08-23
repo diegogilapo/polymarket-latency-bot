@@ -31,8 +31,8 @@ class RealTradingEngine:
 
         self.funder_address: str = ""
         self.client: Optional[ClobClient] = None
-        self.balance_usdc: float = 0.0
-        self.initial_balance: float = 0.0
+        self.balance_usdc: float = float(config.simulation_initial_balance) if config.simulation_initial_balance > 0 else 48.99
+        self.initial_balance: float = float(config.simulation_initial_balance) if config.simulation_initial_balance > 0 else 48.99
         self.total_pnl_usdc: float = 0.0
         self.closed_trades_count: int = 0
         self.wins_count: int = 0
