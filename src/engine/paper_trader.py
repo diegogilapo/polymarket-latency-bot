@@ -78,102 +78,107 @@ class PaperTradingEngine:
         else:
             current_order_size = self.order_size
 
-        # 1. CASO DE EXPLOTACIÓN DE PRECIO ERRÓNEO: Ask del mercado demasiado barato
-        if opp.mispricing_type == "CHEAP_ASK" and opp.market_best_ask > 0:
-            if now - self.last_fill_time.get(f"{cond_id}_buy", 0) > 3.0:
-                shares = round(current_order_size / opp.market_best_ask, 2)
-                cost = round(shares * opp.market_best_ask, 2)
-                
-                if self.balance_usdc >= cost and (inv.shares_held + shares) <= config.max_inventory_per_market:
-                    self.balance_usdc -= cost
-                    inv.shares_held += shares
-                    inv.avg_buy_price = opp.market_best_ask
-                    self.last_fill_time[f"{cond_id}_buy"] = now
+        # 1. Control Estricto de Exposición de Billetera (Máximo 35% del capital total expuesto)
+        active_positions_count = len([i for i in self.inventories.values() if i.shares_held >= 5.0])
+        total_invested = sum(i.shares_held * i.avg_buy_price for i in self.inventories.values())
+        total_equity = self.balance_usdc + total_invested
+        max_allowed_investment = total_equity * config.max_total_exposure_pct
 
-                    logger.info(
-                        f"🎯 [SNIPER FILL - PRECIO BARATO] [{opp.asset}] Compradas {shares} acciones YES @ {opp.market_best_ask:.3f} "
-                        f"(Valor Justo: {opp.fair_price:.3f} | Descuento: +{opp.mispricing_edge*100:.1f}¢)"
-                    )
+        # 2. CASO DE EJECUCIÓN MAKER ASK: Venta con Beneficio Obligatorio (Nunca vender con pérdida)
+        if inv.shares_held >= 5.0:
+            target_min_sell = round(inv.avg_buy_price + config.min_trade_profit_cents, 3)
+            sell_price = max(opp.limit_ask, opp.market_best_bid)
 
-        # 2. CASO DE EJECUCIÓN MAKER BID (Nuestra orden límite de compra fue ejecutada)
-        elif opp.market_best_ask <= opp.limit_bid and opp.limit_bid > 0:
-            if now - self.last_fill_time.get(f"{cond_id}_bid_fill", 0) > 4.0:
-                shares = round(current_order_size / opp.limit_bid, 2)
-                cost = round(shares * opp.limit_bid, 2)
+            # Solo ejecutar venta si cubre el costo + margen de beneficio
+            if sell_price >= target_min_sell:
+                if now - self.last_fill_time.get(f"{cond_id}_ask_fill", 0) > 2.0:
+                    shares_to_sell = inv.shares_held
+                    proceeds = round(shares_to_sell * sell_price, 2)
+                    cost_basis = round(shares_to_sell * inv.avg_buy_price, 2)
+                    profit = round(proceeds - cost_basis, 2)
+                    profit_pct = round((profit / cost_basis) * 100.0, 2) if cost_basis > 0 else 0.0
 
-                if self.balance_usdc >= cost and (inv.shares_held + shares) <= config.max_inventory_per_market:
-                    self.balance_usdc -= cost
-                    total_shares = inv.shares_held + shares
-                    inv.avg_buy_price = ((inv.shares_held * inv.avg_buy_price) + cost) / total_shares if total_shares > 0 else opp.limit_bid
-                    inv.shares_held = total_shares
-                    self.last_fill_time[f"{cond_id}_bid_fill"] = now
-
-                    logger.info(
-                        f"📥 [MAKER BID FILL] [{opp.asset}] Retail vendió a nuestra orden límite de compra: {shares} acciones @ {opp.limit_bid:.3f} USDC"
-                    )
-
-        # 3. CASO DE EJECUCIÓN MAKER ASK (Nuestra orden límite de venta fue ejecutada - Ciclo Completado)
-        if inv.shares_held >= 10.0 and (opp.market_best_bid >= opp.limit_ask or opp.mispricing_type == "EXPENSIVE_BID"):
-            if now - self.last_fill_time.get(f"{cond_id}_ask_fill", 0) > 3.0:
-                shares_to_sell = min(inv.shares_held, round(current_order_size / opp.limit_ask, 2))
-                sell_price = max(opp.limit_ask, opp.market_best_bid)
-                proceeds = round(shares_to_sell * sell_price, 2)
-                cost_basis = round(shares_to_sell * inv.avg_buy_price, 2) if inv.avg_buy_price > 0 else round(shares_to_sell * opp.limit_bid, 2)
-                
-                profit = round(proceeds - cost_basis, 2)
-                profit_pct = round((profit / cost_basis) * 100.0, 2) if cost_basis > 0 else 0.0
-
-                self.balance_usdc += proceeds
-                self.total_pnl_usdc += profit
-                inv.shares_held -= shares_to_sell
-                inv.realized_pnl_usdc += profit
-                inv.roundtrips_count += 1
-                self.closed_trades_count += 1
-
-                if profit >= 0:
+                    self.balance_usdc += proceeds
+                    self.total_pnl_usdc += profit
+                    inv.shares_held = 0.0
+                    inv.realized_pnl_usdc += profit
+                    inv.roundtrips_count += 1
+                    self.closed_trades_count += 1
                     self.wins_count += 1
-                    status_tag = "🟢 WIN"
-                    color_tag = "[green]"
-                else:
-                    self.losses_count += 1
-                    status_tag = "🔴 LOSS"
-                    color_tag = "[red]"
+                    self.last_fill_time[f"{cond_id}_ask_fill"] = now
 
-                self.last_fill_time[f"{cond_id}_ask_fill"] = now
+                    # Registrar en CSV
+                    time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+                    try:
+                        trade_logger.log_trade({
+                            "timestamp_entry": time_str,
+                            "timestamp_exit": time_str,
+                            "market_question": opp.market_question,
+                            "token_id": opp.yes_token_id[:12],
+                            "outcome": "YES_SPREAD_CYCLE",
+                            "side": "MAKER_ROUNDTRIP",
+                            "entry_price": f"{inv.avg_buy_price:.4f}",
+                            "exit_price": f"{sell_price:.4f}",
+                            "shares_count": f"{shares_to_sell:.2f}",
+                            "size_usdc": f"{cost_basis:.2f}",
+                            "pnl_usdc": f"{profit:.2f}",
+                            "pnl_percentage": f"{profit_pct:.2f}%",
+                            "exit_reason": "SPREAD_ROUNDTRIP_COMPLETED",
+                            "lag_duration_ms": self.latency_ms,
+                            "btc_price_entry": f"{self.price_feed.get_price(opp.asset):.2f}",
+                            "btc_price_exit": f"{self.price_feed.get_price(opp.asset):.2f}",
+                            "simulated_balance_after": f"{self.balance_usdc:.2f}"
+                        })
+                    except Exception:
+                        pass
 
-                # Registrar en CSV
-                time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
-                try:
-                    trade_logger.log_trade({
-                        "timestamp_entry": time_str,
-                        "timestamp_exit": time_str,
-                        "market_question": opp.market_question,
-                        "token_id": opp.yes_token_id[:12],
-                        "outcome": "YES_SPREAD_CYCLE",
-                        "side": "MAKER_ROUNDTRIP",
-                        "entry_price": f"{inv.avg_buy_price:.4f}",
-                        "exit_price": f"{sell_price:.4f}",
-                        "shares_count": f"{shares_to_sell:.2f}",
-                        "size_usdc": f"{cost_basis:.2f}",
-                        "pnl_usdc": f"{profit:.2f}",
-                        "pnl_percentage": f"{profit_pct:.2f}%",
-                        "exit_reason": "SPREAD_ROUNDTRIP_COMPLETED",
-                        "lag_duration_ms": self.latency_ms,
-                        "btc_price_entry": f"{self.price_feed.get_price(opp.asset):.2f}",
-                        "btc_price_exit": f"{self.price_feed.get_price(opp.asset):.2f}",
-                        "simulated_balance_after": f"{self.balance_usdc:.2f}"
-                    })
-                except Exception:
-                    pass
+                    logger.info(
+                        f"[green]💰 [MAKER SPREAD CAPTURADO][/] [{opp.asset}] "
+                        f"Compra: {inv.avg_buy_price:.3f} ➔ Venta: {sell_price:.3f} | "
+                        f"Spread: +{sell_price - inv.avg_buy_price:.3f}¢ | "
+                        f"Ganancia Neta: [green]+${profit:.2f} USDC ({profit_pct:+.2f}%)[/] | "
+                        f"Balance Total: ${self.balance_usdc:.2f} USDC"
+                    )
 
-                logger.info(
-                    f"{color_tag}💰 [MAKER SPREAD CAPTURADO][/] [{opp.asset}] "
-                    f"Compra: {inv.avg_buy_price:.3f} ➔ Venta: {sell_price:.3f} | "
-                    f"Spread: +{sell_price - inv.avg_buy_price:.3f}¢ | "
-                    f"Ganancia Neta: {color_tag}+${profit:.2f} USDC ({profit_pct:+.2f}%)[/] | "
-                    f"Balance Total: ${self.balance_usdc:.2f} USDC"
-                )
+        # 3. CASO DE COMPRA: Solo comprar si tenemos liquidez libre y no excedemos el límite de posiciones
+        can_open_new = (active_positions_count < config.max_active_positions) or (inv.shares_held >= 5.0)
+        can_invest = (total_invested < max_allowed_investment) and (self.balance_usdc >= current_order_size)
 
+        if can_open_new and can_invest:
+            # Caso A: Explotación de Precio Barato (CHEAP_ASK)
+            if opp.mispricing_type == "CHEAP_ASK" and opp.market_best_ask > 0:
+                if now - self.last_fill_time.get(f"{cond_id}_buy", 0) > 3.0:
+                    shares = round(current_order_size / opp.market_best_ask, 2)
+                    cost = round(shares * opp.market_best_ask, 2)
+                    
+                    if self.balance_usdc >= cost and (inv.shares_held + shares) <= config.max_inventory_per_market:
+                        self.balance_usdc -= cost
+                        total_sh = inv.shares_held + shares
+                        inv.avg_buy_price = ((inv.shares_held * inv.avg_buy_price) + cost) / total_sh if total_sh > 0 else opp.market_best_ask
+                        inv.shares_held = total_sh
+                        self.last_fill_time[f"{cond_id}_buy"] = now
+
+                        logger.info(
+                            f"🎯 [SNIPER FILL - PRECIO BARATO] [{opp.asset}] Compradas {shares} acciones YES @ {opp.market_best_ask:.3f} "
+                            f"(Valor Justo: {opp.fair_price:.3f} | Descuento: +{opp.mispricing_edge*100:.1f}¢)"
+                        )
+
+            # Caso B: Ejecución Maker Bid
+            elif opp.market_best_ask <= opp.limit_bid and opp.limit_bid > 0:
+                if now - self.last_fill_time.get(f"{cond_id}_bid_fill", 0) > 4.0:
+                    shares = round(current_order_size / opp.limit_bid, 2)
+                    cost = round(shares * opp.limit_bid, 2)
+
+                    if self.balance_usdc >= cost and (inv.shares_held + shares) <= config.max_inventory_per_market:
+                        self.balance_usdc -= cost
+                        total_sh = inv.shares_held + shares
+                        inv.avg_buy_price = ((inv.shares_held * inv.avg_buy_price) + cost) / total_sh if total_sh > 0 else opp.limit_bid
+                        inv.shares_held = total_sh
+                        self.last_fill_time[f"{cond_id}_bid_fill"] = now
+
+                        logger.info(
+                            f"📥 [MAKER BID FILL] [{opp.asset}] Retail vendió a nuestra orden límite de compra: {shares} acciones @ {opp.limit_bid:.3f} USDC"
+                        )
     def get_open_positions_summary(self) -> List[Dict[str, Any]]:
         """Retorna el listado detallado y claro de posiciones e inventario actualmente abierto"""
         open_pos = []
@@ -197,5 +202,66 @@ class PaperTradingEngine:
         return open_pos
 
     def evaluate_open_positions(self):
-        """En Market Making el inventario se gestiona dinámicamente mediante el modelo Avellaneda-Stoikov"""
-        pass
+        """Revisa libros de órdenes en tiempo real y ejecuta ventas cuando el bid de mercado cubre el costo + beneficio"""
+        now = time.time()
+        for cond_id, inv in list(self.inventories.items()):
+            if inv.shares_held < 5.0:
+                continue
+
+            market = self.polymarket.active_markets.get(cond_id)
+            if not market:
+                continue
+
+            market_bid = market.yes_book.best_bid
+            target_min_sell = round(inv.avg_buy_price + config.min_trade_profit_cents, 3)
+
+            if market_bid >= target_min_sell:
+                if now - self.last_fill_time.get(f"{cond_id}_ask_fill", 0) > 2.0:
+                    shares_to_sell = inv.shares_held
+                    sell_price = market_bid
+                    proceeds = round(shares_to_sell * sell_price, 2)
+                    cost_basis = round(shares_to_sell * inv.avg_buy_price, 2)
+                    profit = round(proceeds - cost_basis, 2)
+                    profit_pct = round((profit / cost_basis) * 100.0, 2) if cost_basis > 0 else 0.0
+
+                    self.balance_usdc += proceeds
+                    self.total_pnl_usdc += profit
+                    inv.shares_held = 0.0
+                    inv.realized_pnl_usdc += profit
+                    inv.roundtrips_count += 1
+                    self.closed_trades_count += 1
+                    self.wins_count += 1
+                    self.last_fill_time[f"{cond_id}_ask_fill"] = now
+
+                    # Registrar en CSV
+                    time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+                    try:
+                        trade_logger.log_trade({
+                            "timestamp_entry": time_str,
+                            "timestamp_exit": time_str,
+                            "market_question": inv.question,
+                            "token_id": market.yes_token_id[:12],
+                            "outcome": "YES_SPREAD_CYCLE",
+                            "side": "MAKER_ROUNDTRIP",
+                            "entry_price": f"{inv.avg_buy_price:.4f}",
+                            "exit_price": f"{sell_price:.4f}",
+                            "shares_count": f"{shares_to_sell:.2f}",
+                            "size_usdc": f"{cost_basis:.2f}",
+                            "pnl_usdc": f"{profit:.2f}",
+                            "pnl_percentage": f"{profit_pct:.2f}%",
+                            "exit_reason": "SPREAD_ROUNDTRIP_COMPLETED",
+                            "lag_duration_ms": self.latency_ms,
+                            "btc_price_entry": f"{self.price_feed.get_price(inv.asset):.2f}",
+                            "btc_price_exit": f"{self.price_feed.get_price(inv.asset):.2f}",
+                            "simulated_balance_after": f"{self.balance_usdc:.2f}"
+                        })
+                    except Exception:
+                        pass
+
+                    logger.info(
+                        f"[green]💰 [MAKER SPREAD CAPTURADO][/] [{inv.asset}] "
+                        f"Compra: {inv.avg_buy_price:.3f} ➔ Venta: {sell_price:.3f} | "
+                        f"Spread: +{sell_price - inv.avg_buy_price:.3f}¢ | "
+                        f"Ganancia Neta: [green]+${profit:.2f} USDC ({profit_pct:+.2f}%)[/] | "
+                        f"Balance Total: ${self.balance_usdc:.2f} USDC"
+                    )

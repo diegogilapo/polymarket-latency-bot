@@ -48,6 +48,11 @@ class BotConfig:
     max_inventory_per_market: float = field(default_factory=lambda: get_env_float("MAX_INVENTORY_PER_MARKET", 1000.0))
     inventory_skew_factor: float = field(default_factory=lambda: get_env_float("INVENTORY_SKEW_FACTOR", 0.00008))
     
+    # Control Estricto de Exposición y Protección de Capital
+    max_active_positions: int = field(default_factory=lambda: get_env_int("MAX_ACTIVE_POSITIONS", 4)) # Máximo 4 mercados con compras simultáneas
+    max_total_exposure_pct: float = field(default_factory=lambda: get_env_float("MAX_TOTAL_EXPOSURE_PCT", 0.35)) # Máximo 35% de la cuenta invertida
+    min_trade_profit_cents: float = field(default_factory=lambda: get_env_float("MIN_TRADE_PROFIT_CENTS", 0.020)) # +2.0¢ de beneficio mínimo al vender
+    
     # Cancelación ultra-rápida ante volatilidad tóxica (0.15% en 3s)
     fast_volatility_cancel_pct: float = field(default_factory=lambda: get_env_float("FAST_VOLATILITY_CANCEL_PCT", 0.0015))
     momentum_window_seconds: float = field(default_factory=lambda: get_env_float("MOMENTUM_WINDOW_SECONDS", 3.0))
