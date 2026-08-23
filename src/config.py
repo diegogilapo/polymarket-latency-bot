@@ -29,16 +29,16 @@ def get_env_list(name: str, default: List[str] = None) -> List[str]:
 
 @dataclass
 class BotConfig:
-    # Modo de Operación
-    simulation_mode: bool = field(default_factory=lambda: get_env_bool("SIMULATION_MODE", True))
-    simulation_initial_balance: float = field(default_factory=lambda: get_env_float("SIMULATION_INITIAL_BALANCE", 1000.0))
+    # Modo de Operación (Dinero Real automático si hay clave privada)
+    simulation_mode: bool = field(default_factory=lambda: get_env_bool("SIMULATION_MODE", False if os.getenv("POLYMARKET_PRIVATE_KEY") else True))
+    simulation_initial_balance: float = field(default_factory=lambda: get_env_float("SIMULATION_INITIAL_BALANCE", 48.99))
     simulated_network_latency_ms: int = field(default_factory=lambda: get_env_int("SIMULATED_NETWORK_LATENCY_MS", 15))
 
     # --- ESTRATEGIA DE MARKET MAKING CUANTITATIVO CON ÓRDENES LÍMITE (MAKER ONLY) ---
     # Captura sistemática de spread y arbitraje de precios erróneos
     target_spread_cents: float = field(default_factory=lambda: get_env_float("TARGET_SPREAD_CENTS", 0.030)) # 3.0¢ de spread
     min_spread_cents: float = field(default_factory=lambda: get_env_float("MIN_SPREAD_CENTS", 0.018))    # 1.8¢ spread mínimo
-    order_size_usdc: float = field(default_factory=lambda: get_env_float("ORDER_SIZE_USDC", 50.0))
+    order_size_usdc: float = field(default_factory=lambda: get_env_float("ORDER_SIZE_USDC", 15.0))
     
     # --- MÓDULO A: INTERÉS COMPUESTO AUTOMÁTICO (AUTO-COMPOUNDING) ---
     auto_compounding: bool = field(default_factory=lambda: get_env_bool("AUTO_COMPOUNDING", True))

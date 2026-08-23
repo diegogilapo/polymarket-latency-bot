@@ -51,18 +51,18 @@ class BotApp:
             polymarket=self.polymarket_feed
         )
         
-        # Seleccionar motor de trading según el modo configurado
-        if config.simulation_mode:
+        # Seleccionar motor de trading (Dinero Real prioritario si hay clave privada)
+        if config.polymarket_private_key and not (os.getenv("SIMULATION_MODE", "").lower() == "true" and not config.polymarket_private_key):
+            logger.info("🔴 Inicializando Motor de Trading en DINERO REAL (Polymarket CLOB Polygon)")
+            self.trader = RealTradingEngine(
+                price_feed=self.price_feed,
+                polymarket=self.polymarket_feed
+            )
+        else:
             logger.info("🧪 Inicializando Motor de Simulación (Paper Trading)")
             self.trader = PaperTradingEngine(
                 polymarket_feed=self.polymarket_feed,
                 price_feed=self.price_feed
-            )
-        else:
-            logger.info("🔴 Inicializando Motor de Trading en DINERO REAL (Polymarket CLOB)")
-            self.trader = RealTradingEngine(
-                price_feed=self.price_feed,
-                polymarket=self.polymarket_feed
             )
         
         self.dashboard = Dashboard(
