@@ -115,19 +115,39 @@ class RealTradingEngine:
         
         detected_balance = 0.0
 
-        # 1. Consultar Data API oficial de Polymarket (la misma que alimenta la app web/móvil)
-        try:
-            url = f"https://data-api.polymarket.com/value?user={target_address.lower()}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=3.0) as resp:
-                val_data = json.loads(resp.read())
-                if isinstance(val_data, dict):
-                    val = float(val_data.get("value", 0.0) or val_data.get("total", 0.0) or val_data.get("cash", 0.0))
-                    if val > 0:
-                        detected_balance = round(val, 2)
-                        logger.info(f"📊 [DATA API POLYMARKET] Saldo Detectado para {target_address[:10]}...: ${detected_balance:.2f} USD")
-        except Exception as e:
-            logger.debug(f"Aviso Data API Polymarket: {e}")
+        # 1. Consultar Data API oficial de Polymarket (Múltiples endpoints oficiales)
+        endpoints = [
+            f"https://data-api.polymarket.com/value?user={target_address.lower()}",
+            f"https://data-api.polymarket.com/portfolio?user={target_address.lower()}",
+            f"https://data-api.polymarket.com/balances?user={target_address.lower()}",
+            f"https://data-api.polymarket.com/value?user={self.funder_address.lower()}"
+        ]
+        for url in endpoints:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=3.0) as resp:
+                    data = json.loads(resp.read().decode())
+                    if isinstance(data, list):
+                        for item in data:
+                            if isinstance(item, dict):
+                                val = float(item.get("value", 0.0) or item.get("amount", 0.0) or item.get("cash", 0.0) or item.get("balance", 0.0) or item.get("total", 0.0))
+                                if val > detected_balance:
+                                    detected_balance = round(val, 2)
+                            elif isinstance(item, (int, float)):
+                                if float(item) > detected_balance:
+                                    detected_balance = round(float(item), 2)
+                    elif isinstance(data, dict):
+                        val = float(data.get("value", 0.0) or data.get("total", 0.0) or data.get("cash", 0.0) or data.get("balance", 0.0) or data.get("portfolioValue", 0.0))
+                        if val > detected_balance:
+                            detected_balance = round(val, 2)
+                    elif isinstance(data, (int, float)):
+                        detected_balance = round(float(data), 2)
+                    
+                    if detected_balance > 0:
+                        logger.info(f"📊 [DATA API POLYMARKET] Saldo Detectado: ${detected_balance:.2f} USD")
+                        break
+            except Exception as e:
+                logger.debug(f"Aviso Data API: {e}")
 
         # 2. Consultar CLOB API de Polymarket con los 3 tipos de firma (Gnosis Safe, Proxy, EOA)
         if detected_balance == 0.0:
@@ -151,21 +171,24 @@ class RealTradingEngine:
         # 3. Consultar Contratos ERC20 de Polygon On-Chain (USDC.e / USDC / USDT)
         if detected_balance == 0.0:
             for contract in ["0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"]:
-                for addr in [target_address, self.funder_address]:
+                for addr in [target_address, self.funder_address, "0xbb9C2007dADB32d6c9c33d7CD630A929DcC5eaaf"]:
                     clean_addr = addr.lower().replace("0x", "").zfill(64)
                     call_data = "0x70a08231" + clean_addr
                     payload = {"jsonrpc": "2.0", "method": "eth_call", "params": [{"to": contract, "data": call_data}, "latest"], "id": 1}
-                    try:
-                        req = urllib.request.Request("https://polygon-bor-rpc.publicnode.com", data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
-                        with urllib.request.urlopen(req, timeout=2.0) as resp:
-                            res = json.loads(resp.read())
-                            int_val = int(res.get("result", "0x0"), 16)
-                            if int_val > 0:
-                                detected_balance = round(int_val / 1e6, 2)
-                                logger.info(f"📊 [ON-CHAIN POLYGON] Saldo Detectado en Contrato {contract[:8]}...: ${detected_balance:.2f} USDC")
-                                break
-                    except Exception:
-                        continue
+                    for rpc in ["https://polygon-bor-rpc.publicnode.com", "https://1rpc.io/matic", "https://rpc.ankr.com/polygon"]:
+                        try:
+                            req = urllib.request.Request(rpc, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
+                            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                                res = json.loads(resp.read())
+                                int_val = int(res.get("result", "0x0"), 16)
+                                if int_val > 0:
+                                    detected_balance = round(int_val / 1e6, 2)
+                                    logger.info(f"📊 [ON-CHAIN POLYGON] Saldo Detectado en Contrato: ${detected_balance:.2f} USDC")
+                                    break
+                        except Exception:
+                            continue
+                    if detected_balance > 0:
+                        break
                 if detected_balance > 0:
                     break
 
