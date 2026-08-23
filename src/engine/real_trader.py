@@ -78,12 +78,8 @@ class RealTradingEngine:
             logger.error(f"❌ Error al inicializar cliente real de Polymarket: {e}")
 
     def update_balance(self):
-        """Actualiza el balance real de USDC en la cuenta"""
+        """Actualiza el balance real exacto de USDC en Polygon"""
         if not self.client or not self._is_initialized:
-            if self.balance_usdc == 0.0:
-                self.balance_usdc = 50.0
-                if self.initial_balance == 0.0:
-                    self.initial_balance = 50.0
             return
 
         try:
@@ -93,23 +89,15 @@ class RealTradingEngine:
             
             if isinstance(bal_data, dict):
                 raw_bal = float(bal_data.get("balance", 0.0))
-                # USDC en Polygon tiene 6 decimales
-                parsed_bal = round(raw_bal / 1e6 if raw_bal > 10000 else raw_bal, 2)
+                # USDC en Polygon tiene 6 decimales (ej. 50040000 -> 50.04 USDC)
+                parsed_bal = round(raw_bal / 1e6, 2) if raw_bal > 1000 else round(raw_bal, 2)
                 if parsed_bal > 0:
                     self.balance_usdc = parsed_bal
-                elif self.balance_usdc == 0.0:
-                    self.balance_usdc = 50.0
-            elif self.balance_usdc == 0.0:
-                self.balance_usdc = 50.0
             
             if self.initial_balance == 0.0 and self.balance_usdc > 0:
                 self.initial_balance = self.balance_usdc
                 logger.info(f"💵 Balance Inicial Real Detectado: ${self.balance_usdc:.2f} USDC")
         except Exception as e:
-            if self.balance_usdc == 0.0:
-                self.balance_usdc = 50.0
-                if self.initial_balance == 0.0:
-                    self.initial_balance = 50.0
             logger.debug(f"Aviso al consultar balance CLOB: {e}")
 
     async def execute_signal(self, opp: MarketMakingOpportunity):
