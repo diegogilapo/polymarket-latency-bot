@@ -78,12 +78,8 @@ class RealTradingEngine:
             logger.error(f"❌ Error al inicializar cliente real de Polymarket: {e}")
 
     def update_balance(self):
-        """Actualiza el balance real exacto de USDC en Polygon escaneando EOA, Proxy y Safe"""
+        """Actualiza el balance real exacto de USDC en Polygon escaneando EOA, Proxy y Safe directamente de la blockchain/CLOB"""
         if not self.client or not self._is_initialized:
-            if self.balance_usdc == 0.0:
-                self.balance_usdc = 48.99
-                if self.initial_balance == 0.0:
-                    self.initial_balance = 48.99
             return
 
         from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
@@ -96,6 +92,7 @@ class RealTradingEngine:
                 bal_data = self.client.get_balance_allowance(params=params)
                 if isinstance(bal_data, dict):
                     raw_bal = float(bal_data.get("balance", 0.0))
+                    # La blockchain de Polygon devuelve el saldo en micro-unidades (ej: 48990000 -> $48.99)
                     parsed_bal = round(raw_bal / 1e6, 2) if raw_bal > 1000 else round(raw_bal, 2)
                     if parsed_bal > 0:
                         detected_balance = parsed_bal
@@ -108,12 +105,10 @@ class RealTradingEngine:
 
         if detected_balance > 0:
             self.balance_usdc = detected_balance
-        elif self.balance_usdc == 0.0:
-            self.balance_usdc = 48.99
 
         if self.initial_balance == 0.0 and self.balance_usdc > 0:
             self.initial_balance = self.balance_usdc
-            logger.info(f"💵 Balance Inicial Real Detectado en Polymarket: ${self.balance_usdc:.2f} USDC (Firma Tipo {getattr(self, 'signature_type', 0)})")
+            logger.info(f"💵 Balance Real Oficial de Polymarket Detectado: ${self.balance_usdc:.2f} USDC (Firma Tipo {getattr(self, 'signature_type', 0)})")
 
     async def execute_signal(self, opp: MarketMakingOpportunity):
         """Ejecuta órdenes límite reales en el libro del CLOB de Polymarket"""
