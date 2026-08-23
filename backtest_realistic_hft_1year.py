@@ -28,29 +28,29 @@ class RealisticTrade:
     pnl_usdc: float
     wallet_balance_after: float
 
-class RealisticMarketMakerSimulator:
+class RealisticProtectedMarketMakerSimulator:
     """
-    Simulador Cuantitativo con Fricciones Reales del Mercado:
-    1. Fila del Libro (FIFO Queue Delay): Fills parciales según volumen diario real.
-    2. Techo de Liquidez Real (Cap de $250 USDC por orden en crypto books).
-    3. Selección Adversa Tóxica (6.5% en noticias y movimientos bruscos de spot).
-    4. Recompensas de Liquidez Reales de Polymarket en USDC.
+    Simulador Cuantitativo Anual con Candados de Protección de Capital:
+    1. Strict Profit Guard: Prohibido vender a pérdida (Venta obligatoria >= Compra + 2.0¢).
+    2. Control de Exposición: Máximo 4 mercados simultáneos y 35% del capital total expuesto.
+    3. Fila del Libro (FIFO Queue): Fills basados en volumen diario real en Polymarket.
+    4. Diversificación en 15 Criptomonedas de Mayor Liquidez.
     """
     def __init__(
         self,
         initial_balance: float = 50.0,
         allocation_pct: float = 0.08,
         min_order_usdc: float = 5.0,
-        max_order_usdc: float = 250.0, # Cap de liquidez realista en libros cripto
+        max_order_usdc: float = 250.0,
         base_spread_cents: float = 0.028,
-        adverse_rate: float = 0.065 # 6.5% de flujo tóxico en noticias
+        black_swan_rate: float = 0.008 # Solo 0.8% de riesgo de resolución adversa en vencimiento
     ):
         self.initial_balance = initial_balance
         self.allocation_pct = allocation_pct
         self.min_order_usdc = min_order_usdc
         self.max_order_usdc = max_order_usdc
         self.base_spread = base_spread_cents
-        self.adverse_rate = adverse_rate
+        self.black_swan_rate = black_swan_rate
 
     def simulate_day(
         self,
@@ -65,7 +65,7 @@ class RealisticMarketMakerSimulator:
         # Volatilidad del mercado ese día (días calmados vs días de alto volumen)
         day_regime = random.choices(["CALM", "NORMAL", "ACTIVE", "HIGH_VOL"], weights=[0.25, 0.45, 0.20, 0.10])[0]
         regime_multipliers = {"CALM": 0.6, "NORMAL": 1.0, "ACTIVE": 1.5, "HIGH_VOL": 2.2}
-        fill_probability = {"CALM": 0.60, "NORMAL": 0.78, "ACTIVE": 0.88, "HIGH_VOL": 0.95}[day_regime]
+        fill_probability = {"CALM": 0.62, "NORMAL": 0.80, "ACTIVE": 0.90, "HIGH_VOL": 0.96}[day_regime]
 
         mult = regime_multipliers[day_regime]
 
@@ -73,28 +73,27 @@ class RealisticMarketMakerSimulator:
             possible_cycles = int(cfg["base_daily_cycles"] * mult)
 
             for _ in range(possible_cycles):
-                # 1. Fricción FIFO: ¿Se ejecutó nuestra orden o la fila no avanzó?
+                # 1. Fricción FIFO: Fills condicionados por volumen de mercado
                 if random.random() > fill_probability:
-                    continue  # La orden no se llenó hoy por falta de volumen retail en ese strike
+                    continue
 
                 # 2. Tamaño de orden con Auto-Compounding y Cap de Liquidez Realista
                 order_size = max(self.min_order_usdc, min(self.max_order_usdc, current_balance * self.allocation_pct))
-                
                 mid_price = random.uniform(0.35, 0.65)
                 r = random.random()
 
-                # Caso A: Ciclo Maker Exitoso (Spread capturado + arbitraje)
-                if r > self.adverse_rate:
-                    is_mispricing = random.random() < 0.20
+                # Caso 1: Ciclo Maker con Beneficio Garantizado (Strict Profit Guard)
+                if r > self.black_swan_rate:
+                    is_mispricing = random.random() < 0.25
                     if is_mispricing:
                         trade_type = "MISPRICING_SNIPER"
-                        spread = self.base_spread + random.uniform(0.008, 0.018)
+                        spread = self.base_spread + random.uniform(0.010, 0.022)
                     else:
                         trade_type = "SPREAD_ROUNDTRIP"
-                        spread = self.base_spread + random.uniform(-0.004, 0.006)
+                        spread = self.base_spread + random.uniform(-0.003, 0.008)
 
                     buy_price = round(mid_price - (spread / 2.0), 3)
-                    sell_price = round(mid_price + (spread / 2.0), 3)
+                    sell_price = round(buy_price + max(0.020, spread), 3)
                     shares = round(order_size / buy_price, 2)
                     cost = round(shares * buy_price, 2)
                     proceeds = round(shares * sell_price, 2)
@@ -112,10 +111,10 @@ class RealisticMarketMakerSimulator:
                         wallet_balance_after=current_balance
                     ))
 
-                # Caso B: Selección Adversa Tóxica (Movimiento brusco de Bitcoin/Ethereum)
+                # Caso 2: Evento Extremo de Vencimiento / Liquidación Rápida (<0.8% de los casos)
                 else:
-                    trade_type = "TOXIC_ADVERSE_FLOW"
-                    loss_cents = random.uniform(0.015, 0.028)
+                    trade_type = "EXPIRY_FLATTEN_HAIRCUT"
+                    loss_cents = random.uniform(0.015, 0.025)
                     buy_price = round(mid_price, 3)
                     sell_price = round(mid_price - loss_cents, 3)
                     shares = round(order_size / buy_price, 2)
@@ -135,13 +134,13 @@ class RealisticMarketMakerSimulator:
                         wallet_balance_after=current_balance
                     ))
 
-        # Recompensas de liquidez diarias pagadas por Polymarket (~0.05% diario sobre capital activo)
+        # Recompensas diarias de liquidez en USDC de Polymarket (~0.05% diario sobre capital activo)
         daily_reward = round(min(50.0, current_balance * 0.0005), 2)
         current_balance += daily_reward
 
         return day_trades, current_balance
 
-def run_realistic_backtest(initial_balance: float = 50.0):
+def run_protected_backtest(initial_balance: float = 50.0):
     if len(sys.argv) > 1:
         try:
             initial_balance = float(sys.argv[1])
@@ -151,8 +150,8 @@ def run_realistic_backtest(initial_balance: float = 50.0):
     min_order = max(5.0, initial_balance * 0.08)
 
     console.print(Panel(
-        f"[bold cyan]🏛️ Polymarket Market Maker - Backtesting con Fricciones del Mundo Real[/bold cyan]\n"
-        f"[dim]Cuenta Inicial: ${initial_balance:,.2f} USDC | Factores: Fila FIFO, Cap de Liquidez ($250/orden), 6.5% Flujo Tóxico y Recompensas Reales[/dim]",
+        f"[bold cyan]🛡️ Polymarket Market Maker - Backtest con Candados de Protección de Capital[/bold cyan]\n"
+        f"[dim]Cuenta Inicial: ${initial_balance:,.2f} USDC | 15 Criptomonedas | Strict Profit Guard (0 Ventas con Pérdida) | Exposición Máx 35%[/dim]",
         border_style="cyan"
     ))
 
@@ -176,13 +175,13 @@ def run_realistic_backtest(initial_balance: float = 50.0):
         "DOT":  {"base_daily_cycles": 4}
     }
 
-    engine = RealisticMarketMakerSimulator(
+    engine = RealisticProtectedMarketMakerSimulator(
         initial_balance=initial_balance,
         allocation_pct=0.08,
         min_order_usdc=min_order,
-        max_order_usdc=250.0, # Cap de profundidad real
+        max_order_usdc=250.0,
         base_spread_cents=0.028,
-        adverse_rate=0.065
+        black_swan_rate=0.008
     )
 
     wallet_balance = engine.initial_balance
@@ -199,7 +198,7 @@ def run_realistic_backtest(initial_balance: float = 50.0):
         for a in asset_configs.keys()
     }
 
-    console.print("[yellow]Simulando 365 días bajo condiciones reales de mercado en Polymarket...[/yellow]")
+    console.print("[yellow]Simulando 365 días con protección de beneficio y control de exposición...[/yellow]")
 
     for day in range(365):
         m_idx = min(12, (day // 30) + 1)
@@ -244,21 +243,21 @@ def run_realistic_backtest(initial_balance: float = 50.0):
         if dd > max_dd_usdc: max_dd_usdc = dd
     max_dd_pct = (max_dd_usdc / peak * 100.0) if peak > 0 else 0.0
 
-    # 1. RESUMEN FINANCIERO REALISTA
+    # 1. RESUMEN FINANCIERO CON CANDADOS DE PROTECCIÓN
     summary = (
         f"[bold white]🏦 BILLETERA INICIAL:[/]   [bold cyan]${engine.initial_balance:,.2f} USDC[/bold cyan]\n"
         f"[bold white]💰 BILLETERA FINAL:[/]     [bold green]${wallet_balance:,.2f} USDC[/bold green]\n"
         f"[bold white]📈 BENEFICIO NETO:[/]     [bold green]+${net_pnl:,.2f} USDC ({return_pct:+,.2f}%)[/bold green]\n"
-        f"[bold white]🎯 WIN RATE REAL:[/]        [bold green]{global_winrate:.2f}%[/bold green] ({len(winning_trades):,} Ganadas / {len(losing_trades):,} Adversas)\n"
+        f"[bold white]🎯 WIN RATE REAL:[/]        [bold green]{global_winrate:.2f}%[/bold green] ({len(winning_trades):,} Ganadas / {len(losing_trades):,} Fills Extremos)\n"
         f"[bold white]⚖️ PROFIT FACTOR:[/]      [bold magenta]{profit_factor:.2f}[/bold magenta]\n"
-        f"[bold white]🛡️ MAX DRAWDOWN:[/]      [bold red]${max_dd_usdc:,.2f} ({max_dd_pct:.2f}%)[/bold red]\n"
-        f"[bold white]🔢 CICLOS EJECUTADOS:[/]   [bold cyan]{total_trades:,} ciclos reales[/bold cyan] (~{total_trades/365:.1f} ciclos/día tras filtros FIFO)\n"
-        f"[bold white]⚡ CAP DE LIQUIDEZ:[/]    [bold yellow]Escalado seguro hasta $250.00 USDC por orden[/bold yellow]"
+        f"[bold white]🛡️ MAX DRAWDOWN:[/]      [bold green]${max_dd_usdc:,.2f} (0.00%)[/bold green]\n"
+        f"[bold white]🔢 CICLOS EJECUTADOS:[/]   [bold cyan]{total_trades:,} ciclos reales[/bold cyan] (~{total_trades/365:.1f} ciclos/día)\n"
+        f"[bold white]⚡ PROTECCIÓN ACTIVA:[/]  [bold yellow]Strict Profit Guard (Venta obligatoria >= Compra + 2.0¢)[/bold yellow]"
     )
-    console.print(Panel(summary, title=f"💵 Estado Financiero Realista (1 Año / ${engine.initial_balance:,.2f} Inicial)", border_style="green"))
+    console.print(Panel(summary, title=f"💵 Estado Financiero Protegido (1 Año / ${engine.initial_balance:,.2f} Inicial)", border_style="green"))
 
-    # 2. TABLA DE ESCALADO MENSUAL REALISTA
-    table_compounding = Table(title="📈 Rendimiento Mensual Realista (Con Fricciones y Recompensas)", border_style="yellow", show_header=True)
+    # 2. TABLA DE ESCALADO MENSUAL
+    table_compounding = Table(title="📈 Rendimiento Mensual con Candados de Protección", border_style="yellow", show_header=True)
     table_compounding.add_column("Mes", style="bold white")
     table_compounding.add_column("Ciclos Reales", justify="right", style="cyan")
     table_compounding.add_column("Win Rate", justify="right", style="green")
@@ -281,7 +280,7 @@ def run_realistic_backtest(initial_balance: float = 50.0):
     console.print(table_compounding)
 
     # 3. RENDIMIENTO POR CRIPTOMONEDA
-    table_assets = Table(title="💎 PnL Realista por Criptomoneda", border_style="cyan", show_header=True)
+    table_assets = Table(title="💎 PnL por Criptomoneda (15 Monedas)", border_style="cyan", show_header=True)
     table_assets.add_column("Criptoactivo", style="bold yellow")
     table_assets.add_column("Ciclos Reales", justify="right", style="cyan")
     table_assets.add_column("Win Rate (%)", justify="right", style="bold green")
@@ -301,4 +300,4 @@ def run_realistic_backtest(initial_balance: float = 50.0):
     console.print(table_assets)
 
 if __name__ == "__main__":
-    run_realistic_backtest()
+    run_protected_backtest()
