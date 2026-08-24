@@ -298,6 +298,8 @@ class RealTradingEngine:
                         )
                     except PolyApiException as e:
                         err_detail = getattr(e, "error_msg", None) or getattr(e, "message", str(e))
+                        if "not enough balance" in str(err_detail).lower():
+                            inv.shares_held = 0.0
                         logger.error(f"❌ Error de API CLOB al enviar venta real: {err_detail} (Código: {getattr(e, 'status_code', None)})")
                     except Exception as e:
                         logger.error(f"Error inesperado al procesar orden de venta real: {e}")
@@ -323,9 +325,8 @@ class RealTradingEngine:
 
                         cost = round(shares * buy_price, 2)
                         self.balance_usdc = max(0.0, self.balance_usdc - cost)
-                        total_sh = inv.shares_held + shares
-                        inv.avg_buy_price = ((inv.shares_held * inv.avg_buy_price) + cost) / total_sh if total_sh > 0 else buy_price
-                        inv.shares_held = total_sh
+                        inv.avg_buy_price = buy_price
+                        inv.shares_held = shares
                         self.last_fill_time[f"{cond_id}_real_buy"] = now
                     except PolyApiException as e:
                         err_detail = getattr(e, "error_msg", None) or getattr(e, "message", str(e))
@@ -387,6 +388,11 @@ class RealTradingEngine:
                             f"Compra: ${inv.avg_buy_price:.3f} ➔ Venta: ${market_bid:.3f} | "
                             f"Ganancia Real: +${profit:.2f} USDC | Balance: ${self.balance_usdc:.2f} USDC"
                         )
+                    except PolyApiException as e:
+                        err_detail = getattr(e, "error_msg", None) or getattr(e, "message", str(e))
+                        if "not enough balance" in str(err_detail).lower():
+                            inv.shares_held = 0.0
+                        logger.error(f"❌ Error de API CLOB al vender en evaluate_open_positions: {err_detail}")
                     except Exception as e:
                         logger.error(f"Error en evaluate_open_positions real: {e}")
 
