@@ -57,11 +57,14 @@ class Dashboard:
         
         total_invested = sum(i.shares_held * i.avg_buy_price for i in getattr(self.trader, "inventories", {}).values())
         total_equity = self.trader.balance_usdc + total_invested
+        free_cash = getattr(self.trader, "free_cash", self.trader.balance_usdc)
+        in_book_orders = getattr(self.trader, "active_orders_amount", 0.0)
+        open_orders_cnt = len(getattr(self.trader, "open_orders", []))
         
         wallet_box = (
             f"[bold white]🏦 Capital Total:[/] [bold cyan]${total_equity:,.2f} USDC[/bold cyan]  │  "
-            f"[bold white]Efectivo Libre:[/] [bold green]${self.trader.balance_usdc:,.2f} USDC[/bold green]  │  "
-            f"[bold white]Invertido en Órdenes:[/] [bold yellow]${total_invested:,.2f} USDC[/bold yellow]  │  "
+            f"[bold white]Efectivo Libre:[/] [bold green]${free_cash:,.2f} USDC[/bold green]  │  "
+            f"[bold white]En Órdenes del Libro:[/] [bold yellow]${in_book_orders:,.2f} USDC ({open_orders_cnt} órdenes)[/bold yellow]  │  "
             f"[bold white]PnL:[/] {pnl_color}{pnl:+,.2f} USDC[/]  │  "
             f"[bold white]WinRate:[/] [bold green]{winrate:.1f}%[/bold green]\n"
             f"[bold white]⚡ Estrategia:[/] [bold green]Market Making Cuantitativo (Maker-Only / Cobrando Spread)[/bold green]  │  "

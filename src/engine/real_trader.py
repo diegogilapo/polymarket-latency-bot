@@ -225,10 +225,21 @@ class RealTradingEngine:
 
         if detected_balance > 0:
             self.balance_usdc = detected_balance
+            try:
+                open_orders = self.client.get_open_orders()
+                if isinstance(open_orders, list):
+                    self.open_orders = open_orders
+                    self.active_orders_amount = round(sum(
+                        float(o.get("price", 0.0) or 0.0) * float(o.get("original_size", 0.0) or o.get("size", 0.0) or 0.0)
+                        for o in open_orders if str(o.get("side", "")).upper() == "BUY"
+                    ), 2)
+                    self.free_cash = max(0.0, round(self.balance_usdc - self.active_orders_amount, 2))
+            except Exception:
+                self.free_cash = self.balance_usdc
 
         if self.initial_balance == 0.0 and self.balance_usdc > 0:
             self.initial_balance = self.balance_usdc
-            logger.info(f"💵 Balance Real Detectado en Polymarket: ${self.balance_usdc:.2f} USDC")
+            logger.info(f"💵 Balance Real Detectado en Polymarket: ${self.balance_usdc:.2f} USDC (Libre: ${self.free_cash:.2f} USDC)")
 
     async def execute_signal(self, opp: MarketMakingOpportunity):
         """Ejecuta órdenes límite reales en el libro del CLOB de Polymarket"""
@@ -253,12 +264,20 @@ class RealTradingEngine:
         total_equity = self.balance_usdc + total_invested
         max_allowed_investment = total_equity * config.max_total_exposure_pct
 
-        # Tamaño de orden
+        # Tamaño de orden dinámico adaptado al capital real
+        free_cash = getattr(self, "free_cash", self.balance_usdc)
         if config.auto_compounding:
             compounded_size = self.balance_usdc * config.compounding_allocation_pct
-            current_order_size = max(config.min_order_size_usdc, min(config.max_order_size_usdc, compounded_size))
+            current_order_size = max(5.0, min(10.0, compounded_size))
         else:
-            current_order_size = config.order_size_usdc
+            current_order_size = max(5.0, min(config.order_size_usdc, 10.0))
+
+        if free_cash < current_order_size:
+            current_order_size = free_cash
+
+        # Si el efectivo libre disponible no alcanza para una orden de al menos 3 USDC, no enviar orden
+        if current_order_size < 3.0:
+            return
 
         # 2. CASO DE EJECUCIÓN VENTA (Strict Profit Guard)
         if inv.shares_held >= 5.0:
@@ -357,6 +376,22 @@ class RealTradingEngine:
         if now - getattr(self, "_last_balance_check", 0.0) > 5.0:
             self._last_balance_check = now
             self.update_balance()
+
+        # Reciclaje automático de órdenes que lleven > 25s en el libro sin ejecutarse
+        if now - getattr(self, "_last_stale_check", 0.0) > 10.0:
+            self._last_stale_check = now
+            try:
+                open_orders = self.client.get_open_orders()
+                if isinstance(open_orders, list) and len(open_orders) > 0:
+                    for o in open_orders:
+                        created_at = float(o.get("created_at", 0) or 0)
+                        if now - created_at > 25.0:
+                            oid = o.get("id")
+                            if oid:
+                                self.client.cancel_order(oid)
+                                logger.info(f"🔄 [LIBERANDO CAPITAL] Orden {oid[:16]}... cancelada para rotar liquidez a nuevas oportunidades.")
+            except Exception:
+                pass
 
         for cond_id, inv in list(self.inventories.items()):
             if inv.shares_held < 5.0:
