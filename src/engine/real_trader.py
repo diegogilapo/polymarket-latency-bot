@@ -295,11 +295,11 @@ class RealTradingEngine:
         can_invest = (total_invested < max_allowed_investment) and (self.balance_usdc >= current_order_size)
 
         if can_open_new and can_invest:
-            if (opp.mispricing_type == "CHEAP_ASK" and opp.market_best_ask > 0) or (opp.market_best_ask <= opp.limit_bid and opp.limit_bid > 0):
-                buy_price = opp.market_best_ask if opp.mispricing_type == "CHEAP_ASK" else opp.limit_bid
-                if now - self.last_fill_time.get(f"{cond_id}_real_buy", 0) > 4.0:
+            buy_price = opp.limit_bid if (opp.limit_bid > 0 and opp.limit_bid <= opp.market_best_ask) else (opp.market_best_ask if opp.mispricing_type == "CHEAP_ASK" else 0.0)
+            if buy_price > 0.01:
+                if now - self.last_fill_time.get(f"{cond_id}_real_buy", 0) > 3.0:
                     try:
-                        shares = round(current_order_size / buy_price, 2)
+                        shares = max(5.0, round(current_order_size / buy_price, 1))
                         order_args = OrderArgs(
                             token_id=opp.yes_token_id,
                             price=round(buy_price, 3),
@@ -307,10 +307,10 @@ class RealTradingEngine:
                             side="BUY"
                         )
                         resp = self.client.create_and_post_order(order_args)
-                        logger.info(f"🛒 [ORDEN REAL DE COMPRA ENVIADA] ID: {resp} | {shares} sh @ ${buy_price:.3f}")
+                        logger.info(f"🛒 [ORDEN REAL DE COMPRA ENVIADA] ID: {resp} | {shares} sh @ ${buy_price:.3f} en [{opp.asset}]")
 
                         cost = round(shares * buy_price, 2)
-                        self.balance_usdc -= cost
+                        self.balance_usdc = max(0.0, self.balance_usdc - cost)
                         total_sh = inv.shares_held + shares
                         inv.avg_buy_price = ((inv.shares_held * inv.avg_buy_price) + cost) / total_sh if total_sh > 0 else buy_price
                         inv.shares_held = total_sh
