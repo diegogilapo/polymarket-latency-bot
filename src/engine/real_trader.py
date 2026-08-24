@@ -205,7 +205,7 @@ class RealTradingEngine:
                         clean_addr = addr.lower().replace("0x", "").zfill(64)
                         call_data = "0x70a08231" + clean_addr
                         payload = {"jsonrpc": "2.0", "method": "eth_call", "params": [{"to": contract, "data": call_data}, "latest"], "id": 1}
-                        for rpc in ["https://polygon.drpc.org", "https://1rpc.io/matic", "https://polygon-bor-rpc.publicnode.com"]:
+                        for rpc in ["https://polygon.drpc.org", "https://1rpc.io/matic"]:
                             try:
                                 resp = http_client.post(rpc, json=payload)
                                 if resp.status_code == 200:
