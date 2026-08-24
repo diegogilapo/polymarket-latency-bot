@@ -129,64 +129,64 @@ class RealTradingEngine:
         
         detected_balance = 0.0
 
-        # 1. Consultar Data API y Gamma API oficiales de Polymarket para todas las direcciones
-        for addr in candidate_addresses:
-            endpoints = [
-                f"https://data-api.polymarket.com/portfolio?user={addr}",
-                f"https://data-api.polymarket.com/value?user={addr}",
-                f"https://data-api.polymarket.com/balances?user={addr}",
-                f"https://gamma-api.polymarket.com/users?address={addr}",
-                f"https://gamma-api.polymarket.com/profiles/{addr}"
-            ]
-            for url in endpoints:
-                try:
-                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                    with urllib.request.urlopen(req, timeout=3.0) as resp:
-                        data = json.loads(resp.read().decode())
-                        if isinstance(data, dict):
-                            cash = float(data.get("cash", 0.0) or 0.0)
-                            pos_val = float(data.get("positionsValue", 0.0) or data.get("portfolioValue", 0.0) or data.get("value", 0.0) or data.get("total", 0.0) or 0.0)
-                            total_val = cash + pos_val if (cash > 0 and pos_val > 0) else (pos_val or cash or float(data.get("balance", 0.0) or 0.0))
-                            if total_val > detected_balance:
-                                detected_balance = round(total_val, 2)
-                        elif isinstance(data, list):
-                            for item in data:
-                                if isinstance(item, dict):
-                                    val = float(item.get("value", 0.0) or item.get("amount", 0.0) or item.get("cash", 0.0) or item.get("balance", 0.0) or item.get("total", 0.0))
-                                    if val > detected_balance:
-                                        detected_balance = round(val, 2)
-                                elif isinstance(item, (int, float)):
-                                    if float(item) > detected_balance:
-                                        detected_balance = round(float(item), 2)
-                        elif isinstance(data, (int, float)):
-                            detected_balance = round(float(data), 2)
-                        
-                        if detected_balance > 0:
-                            logger.info(f"📊 [DATA API POLYMARKET] Saldo Total Detectado para {addr[:10]}...: ${detected_balance:.2f} USD")
-                            break
-                except Exception as e:
-                    logger.debug(f"Aviso Data API: {e}")
-            if detected_balance > 0:
-                break
+        # 1. Consultar CLOB API de Polymarket directamente con la firma configurada
+        for sig_type in [config.polymarket_signature_type, 0, 2, 1]:
+            try:
+                params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig_type)
+                bal_data = self.client.get_balance_allowance(params=params)
+                if isinstance(bal_data, dict):
+                    raw_bal = float(bal_data.get("balance", 0.0))
+                    parsed_bal = round(raw_bal / 1e6, 2) if raw_bal > 1000 else round(raw_bal, 2)
+                    if parsed_bal > 0:
+                        detected_balance = parsed_bal
+                        self.signature_type = sig_type
+                        if hasattr(self.client, "builder") and self.client.builder:
+                            self.client.builder.sig_type = sig_type
+                        logger.info(f"📊 [CLOB API POLYMARKET] Saldo Detectado con Firma Tipo {sig_type}: ${detected_balance:.2f} USDC")
+                        break
+            except Exception:
+                continue
 
-        # 2. Consultar CLOB API de Polymarket con los 3 tipos de firma (Gnosis Safe, Proxy, EOA)
+        # 2. Consultar Data API y Gamma API oficiales de Polymarket para todas las direcciones
         if detected_balance == 0.0:
-            for sig_type in [2, 1, 0]:
-                try:
-                    params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig_type)
-                    bal_data = self.client.get_balance_allowance(params=params)
-                    if isinstance(bal_data, dict):
-                        raw_bal = float(bal_data.get("balance", 0.0))
-                        parsed_bal = round(raw_bal / 1e6, 2) if raw_bal > 1000 else round(raw_bal, 2)
-                        if parsed_bal > 0:
-                            detected_balance = parsed_bal
-                            self.signature_type = sig_type
-                            if hasattr(self.client, "builder") and self.client.builder:
-                                self.client.builder.sig_type = sig_type
-                            logger.info(f"📊 [CLOB API POLYMARKET] Saldo Detectado con Firma Tipo {sig_type}: ${detected_balance:.2f} USDC")
-                            break
-                except Exception:
-                    continue
+            for addr in candidate_addresses:
+                endpoints = [
+                    f"https://data-api.polymarket.com/portfolio?user={addr}",
+                    f"https://data-api.polymarket.com/value?user={addr}",
+                    f"https://data-api.polymarket.com/balances?user={addr}",
+                    f"https://gamma-api.polymarket.com/users?address={addr}",
+                    f"https://gamma-api.polymarket.com/profiles/{addr}"
+                ]
+                for url in endpoints:
+                    try:
+                        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                        with urllib.request.urlopen(req, timeout=3.0) as resp:
+                            data = json.loads(resp.read().decode())
+                            if isinstance(data, dict):
+                                cash = float(data.get("cash", 0.0) or 0.0)
+                                pos_val = float(data.get("positionsValue", 0.0) or data.get("portfolioValue", 0.0) or data.get("value", 0.0) or data.get("total", 0.0) or 0.0)
+                                total_val = cash + pos_val if (cash > 0 and pos_val > 0) else (pos_val or cash or float(data.get("balance", 0.0) or 0.0))
+                                if total_val > detected_balance:
+                                    detected_balance = round(total_val, 2)
+                            elif isinstance(data, list):
+                                for item in data:
+                                    if isinstance(item, dict):
+                                        val = float(item.get("value", 0.0) or item.get("amount", 0.0) or item.get("cash", 0.0) or item.get("balance", 0.0) or item.get("total", 0.0))
+                                        if val > detected_balance:
+                                            detected_balance = round(val, 2)
+                                    elif isinstance(item, (int, float)):
+                                        if float(item) > detected_balance:
+                                            detected_balance = round(float(item), 2)
+                            elif isinstance(data, (int, float)):
+                                detected_balance = round(float(data), 2)
+                            
+                            if detected_balance > 0:
+                                logger.info(f"📊 [DATA API POLYMARKET] Saldo Total Detectado para {addr[:10]}...: ${detected_balance:.2f} USD")
+                                break
+                    except Exception as e:
+                        logger.debug(f"Aviso Data API: {e}")
+                if detected_balance > 0:
+                    break
 
         # 3. Consultar Contratos ERC20 de Polygon On-Chain (USDC.e / USDC / USDT)
         if detected_balance == 0.0:
