@@ -24,6 +24,7 @@ class MarketMakingOpportunity:
     spread_captured: float
     mispricing_type: Optional[str]  # "CHEAP_ASK", "EXPENSIVE_BID", "SPREAD_QUOTING"
     mispricing_edge: float
+    is_taker_snipe: bool
     timestamp: float
 
 class ArbitrageDetector:
@@ -170,10 +171,14 @@ class ArbitrageDetector:
 
             mispricing_type = "SPREAD_QUOTING"
             edge = round(our_ask - our_bid, 3)
+            is_taker_snipe = False
 
             if yes_book.best_ask < our_bid:
                 mispricing_type = "CHEAP_ASK"
                 edge = round(our_bid - yes_book.best_ask + 0.020, 3)
+                # Si el desfase es significativo o hay impulso de precio rápido, activar Sniper Taker
+                if edge >= 0.035 or abs(pct_delta) >= 0.0006:
+                    is_taker_snipe = True
             elif yes_book.best_bid > our_ask:
                 mispricing_type = "EXPENSIVE_BID"
                 edge = round(yes_book.best_bid - our_ask + 0.020, 3)
@@ -192,6 +197,7 @@ class ArbitrageDetector:
                 spread_captured=round(our_ask - our_bid, 3),
                 mispricing_type=mispricing_type,
                 mispricing_edge=edge,
+                is_taker_snipe=is_taker_snipe,
                 timestamp=now
             ))
 

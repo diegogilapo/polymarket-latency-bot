@@ -107,6 +107,9 @@ class PolymarketFeed:
         urls = [
             f"{self.gamma_url}/events?closed=false&limit=100&order=volume24hr&ascending=false",
             f"{self.gamma_url}/events?tag_slug=crypto&closed=false&limit=100",
+            f"{self.gamma_url}/events?closed=false&limit=100&search=Up%20or%20Down",
+            f"{self.gamma_url}/events?closed=false&limit=100&search=5%20min",
+            f"{self.gamma_url}/events?closed=false&limit=100&search=15%20min",
             f"{self.gamma_url}/events?closed=false&limit=100&search=bitcoin",
             f"{self.gamma_url}/events?closed=false&limit=100&search=ethereum",
             f"{self.gamma_url}/events?closed=false&limit=100&search=solana",
@@ -197,8 +200,15 @@ class PolymarketFeed:
                     except Exception as err:
                         logger.debug(f"Error consultando {url}: {err}")
 
-            # Ordenar por proximidad al 50% (máxima sensibilidad Gamma)
-            discovered.sort(key=lambda x: abs(x.initial_prob - 0.50))
+            # Ordenar con prioridad para contratos intradía (5m, 15m, Up/Down) y máxima sensibilidad (probabilidad cercana al 50%)
+            def market_priority_score(m: PolymarketMarket) -> float:
+                q_lower = m.question.lower()
+                is_intraday = ("up or down" in q_lower or "5 min" in q_lower or "15 min" in q_lower or "1 hour" in q_lower or "today" in q_lower)
+                freq_bonus = -0.30 if is_intraday else 0.0
+                gamma_dist = abs(m.initial_prob - 0.50)
+                return freq_bonus + gamma_dist
+
+            discovered.sort(key=market_priority_score)
 
             unique_assets = set(m.asset for m in discovered)
             logger.info(f"✅ Se descubrieron {len(discovered)} mercados de ALTA SENSIBILIDAD ({', '.join(unique_assets)}) en Zona Activa (0.05-0.95).")

@@ -328,9 +328,15 @@ class RealTradingEngine:
         can_invest = (total_invested < max_allowed_investment) and (self.balance_usdc >= current_order_size)
 
         if can_open_new and can_invest:
-            buy_price = opp.limit_bid if (opp.limit_bid > 0 and opp.limit_bid <= opp.market_best_ask) else (opp.market_best_ask if opp.mispricing_type == "CHEAP_ASK" else 0.0)
+            if getattr(opp, "is_taker_snipe", False) and opp.market_best_ask > 0.01:
+                buy_price = opp.market_best_ask
+                order_tag = f"🎯 [SNIPER TAKER DISPARADO (+{opp.mispricing_edge*100:.1f}¢)]"
+            else:
+                buy_price = opp.limit_bid if (opp.limit_bid > 0 and opp.limit_bid <= opp.market_best_ask) else (opp.market_best_ask if opp.mispricing_type == "CHEAP_ASK" else 0.0)
+                order_tag = "🛒 [ORDEN MAKER LÍMITE ENVIADA]"
+
             if buy_price > 0.01:
-                if now - self.last_fill_time.get(f"{cond_id}_real_buy", 0) > 3.0:
+                if now - self.last_fill_time.get(f"{cond_id}_real_buy", 0) > 2.0:
                     try:
                         shares = max(5.0, round(current_order_size / buy_price, 1))
                         order_args = OrderArgs(
@@ -343,7 +349,7 @@ class RealTradingEngine:
                         order_id = resp.get("orderID") if isinstance(resp, dict) else str(resp)
                         status = resp.get("status") if isinstance(resp, dict) else "live"
                         
-                        logger.info(f"🛒 [ORDEN REAL DE COMPRA ENVIADA] ID: {order_id[:16]}... | {shares} sh @ ${buy_price:.3f} en [{opp.asset}] (Estado: {status})")
+                        logger.info(f"{order_tag} ID: {order_id[:16]}... | {shares} sh @ ${buy_price:.3f} en [{opp.asset}] (Estado: {status})")
 
                         # Si la orden se ejecutó inmediatamente (Taker)
                         if status == "matched":
