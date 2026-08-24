@@ -286,9 +286,10 @@ class RealTradingEngine:
                             f"Ganancia Real: +${profit:.2f} USDC | Balance: ${self.balance_usdc:.2f} USDC"
                         )
                     except PolyApiException as e:
-                        logger.error(f"Error de API al enviar venta real: {e}")
+                        err_detail = getattr(e, "error_msg", None) or getattr(e, "message", str(e))
+                        logger.error(f"❌ Error de API CLOB al enviar venta real: {err_detail} (Código: {getattr(e, 'status_code', None)})")
                     except Exception as e:
-                        logger.error(f"Error al procesar orden de venta real: {e}")
+                        logger.error(f"Error inesperado al procesar orden de venta real: {e}")
 
         # 3. CASO DE COMPRA (Solo con liquidez libre y límite de posiciones)
         can_open_new = (active_positions_count < config.max_active_positions) or (inv.shares_held >= 5.0)
@@ -316,9 +317,10 @@ class RealTradingEngine:
                         inv.shares_held = total_sh
                         self.last_fill_time[f"{cond_id}_real_buy"] = now
                     except PolyApiException as e:
-                        logger.error(f"Error de API al enviar compra real: {e}")
+                        err_detail = getattr(e, "error_msg", None) or getattr(e, "message", str(e))
+                        logger.error(f"❌ Error de API CLOB al enviar compra real: {err_detail} (Código: {getattr(e, 'status_code', None)})")
                     except Exception as e:
-                        logger.error(f"Error al procesar orden de compra real: {e}")
+                        logger.error(f"Error inesperado al procesar orden de compra real: {e}")
 
     def evaluate_open_positions(self):
         """Escaneo en tiempo real de salidas con ganancia obligatoria en modo real y refresco de saldo"""
