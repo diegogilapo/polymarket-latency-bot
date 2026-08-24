@@ -235,6 +235,7 @@ class RealTradingEngine:
                         for o in open_orders if str(o.get("side", "")).upper() == "BUY"
                     ), 2)
                     self.free_cash = max(0.0, round(self.balance_usdc - self.active_orders_amount, 2))
+                    self.active_sell_tokens = {str(o.get("asset_id", "") or "") for o in open_orders if str(o.get("side", "")).upper() == "SELL"}
             except Exception:
                 self.free_cash = self.balance_usdc
 
@@ -458,52 +459,70 @@ class RealTradingEngine:
                 pass
 
         for cond_id, inv in list(self.inventories.items()):
-            if inv.shares_held < 5.0:
+            if inv.shares_held < 1.0:
                 continue
 
             market = self.polymarket.active_markets.get(cond_id)
             if not market:
                 continue
 
+            token_id = str(market.yes_token_id or "")
+
+            # Si ya hay una orden de venta activa en el libro de Polymarket para este token, no duplicar
+            if token_id in getattr(self, "active_sell_tokens", set()) or cond_id in getattr(self, "pending_sell_orders", set()):
+                continue
+
             market_bid = market.yes_book.best_bid
             target_min_sell = round(inv.avg_buy_price + config.min_trade_profit_cents, 3)
 
-            if market_bid >= target_min_sell:
-                if now - self.last_fill_time.get(f"{cond_id}_real_sell", 0) > 2.0:
+            # Vender al mejor bid del mercado si cubre la ganancia mínima, o colocar en el precio objetivo
+            sell_price = max(market_bid, target_min_sell)
+
+            if sell_price >= target_min_sell:
+                if now - self.last_fill_time.get(f"{cond_id}_real_sell", 0) > 3.0:
                     try:
                         shares_to_sell = inv.shares_held
                         order_args = OrderArgs(
-                            token_id=market.yes_token_id,
-                            price=round(market_bid, 3),
+                            token_id=token_id,
+                            price=round(sell_price, 3),
                             size=round(shares_to_sell, 2),
                             side="SELL"
                         )
                         resp = self.client.create_and_post_order(order_args)
-                        logger.info(f"🚀 [ORDEN REAL DE VENTA ENVIADA] ID: {resp} | {shares_to_sell} sh @ ${market_bid:.3f}")
+                        status = resp.get("status") if isinstance(resp, dict) else "live"
+                        order_id = resp.get("orderID") if isinstance(resp, dict) else str(resp)
 
-                        proceeds = round(shares_to_sell * market_bid, 2)
-                        cost_basis = round(shares_to_sell * inv.avg_buy_price, 2)
-                        profit = round(proceeds - cost_basis, 2)
+                        if status == "matched":
+                            proceeds = round(shares_to_sell * sell_price, 2)
+                            cost_basis = round(shares_to_sell * inv.avg_buy_price, 2)
+                            profit = round(proceeds - cost_basis, 2)
 
-                        self.balance_usdc += proceeds
-                        self.total_pnl_usdc += profit
-                        inv.shares_held = 0.0
-                        inv.realized_pnl_usdc += profit
-                        inv.roundtrips_count += 1
-                        self.closed_trades_count += 1
-                        self.wins_count += 1
+                            self.balance_usdc += proceeds
+                            self.total_pnl_usdc += profit
+                            inv.shares_held = 0.0
+                            inv.realized_pnl_usdc += profit
+                            inv.roundtrips_count += 1
+                            self.closed_trades_count += 1
+                            self.wins_count += 1
+
+                            logger.info(
+                                f"[bold green]💰 [BENEFICIO REAL COBRADO][/bold green] [{inv.asset}] "
+                                f"Compra: ${inv.avg_buy_price:.3f} ➔ Venta: ${sell_price:.3f} | "
+                                f"Ganancia Real: +${profit:.2f} USDC | Balance: ${self.balance_usdc:.2f} USDC"
+                            )
+                        else:
+                            self.active_sell_tokens.add(token_id)
+                            self.pending_sell_orders.add(cond_id)
+                            logger.info(f"🏷️ [ORDEN REAL DE VENTA COLOCADA EN EL LIBRO] ID: {str(order_id)[:16]}... | {shares_to_sell} sh @ ${sell_price:.3f} en [{inv.asset}]")
+
                         self.last_fill_time[f"{cond_id}_real_sell"] = now
-
-                        logger.info(
-                            f"[bold green]💰 [BENEFICIO REAL COBRADO][/bold green] [{inv.asset}] "
-                            f"Compra: ${inv.avg_buy_price:.3f} ➔ Venta: ${market_bid:.3f} | "
-                            f"Ganancia Real: +${profit:.2f} USDC | Balance: ${self.balance_usdc:.2f} USDC"
-                        )
                     except PolyApiException as e:
                         err_detail = getattr(e, "error_msg", None) or getattr(e, "message", str(e))
                         if "not enough balance" in str(err_detail).lower():
-                            inv.shares_held = 0.0
-                        logger.error(f"❌ Error de API CLOB al vender en evaluate_open_positions: {err_detail}")
+                            self.active_sell_tokens.add(token_id)
+                            self.pending_sell_orders.add(cond_id)
+                        else:
+                            logger.error(f"❌ Error de API CLOB al vender en evaluate_open_positions: {err_detail}")
                     except Exception as e:
                         logger.error(f"Error en evaluate_open_positions real: {e}")
 
