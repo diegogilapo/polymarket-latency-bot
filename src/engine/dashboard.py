@@ -55,11 +55,15 @@ class Dashboard:
         pnl_color = "[green]" if pnl >= 0 else "[red]"
         winrate = (self.trader.wins_count / self.trader.closed_trades_count * 100) if self.trader.closed_trades_count > 0 else 100.0
         
+        total_invested = sum(i.shares_held * i.avg_buy_price for i in getattr(self.trader, "inventories", {}).values())
+        total_equity = self.trader.balance_usdc + total_invested
+        
         wallet_box = (
-            f"[bold white]🏦 Balance Actual:[/] [bold cyan]${self.trader.balance_usdc:,.2f} USDC[/bold cyan]  │  "
-            f"[bold white]Inicial:[/] ${self.trader.initial_balance:,.2f} USDC  │  "
-            f"[bold white]PnL Acumulado:[/] {pnl_color}{pnl:+,.2f} USDC[/]  │  "
-            f"[bold white]Trades Ganados:[/] [bold green]{self.trader.wins_count}[/bold green] / [bold red]{self.trader.losses_count}[/bold red] (WinRate: [bold green]{winrate:.1f}%[/bold green])\n"
+            f"[bold white]🏦 Capital Total:[/] [bold cyan]${total_equity:,.2f} USDC[/bold cyan]  │  "
+            f"[bold white]Efectivo Libre:[/] [bold green]${self.trader.balance_usdc:,.2f} USDC[/bold green]  │  "
+            f"[bold white]Invertido en Órdenes:[/] [bold yellow]${total_invested:,.2f} USDC[/bold yellow]  │  "
+            f"[bold white]PnL:[/] {pnl_color}{pnl:+,.2f} USDC[/]  │  "
+            f"[bold white]WinRate:[/] [bold green]{winrate:.1f}%[/bold green]\n"
             f"[bold white]⚡ Estrategia:[/] [bold green]Market Making Cuantitativo (Maker-Only / Cobrando Spread)[/bold green]  │  "
             f"[bold white]Mercados Analizados:[/] [bold yellow]{len(self.polymarket.active_markets)} libros en vivo[/bold yellow]"
         )
