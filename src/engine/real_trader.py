@@ -14,7 +14,7 @@ except ImportError:
 
 from src.config import config
 from src.feeds.multi_feed import MultiExchangePriceFeed
-from src.feeds.polymarket_feed import PolymarketFeed
+from src.feeds.polymarket_feed import PolymarketFeed, detect_market_asset, PolymarketMarket
 from src.engine.arbitrage_detector import MarketMakingOpportunity
 from src.engine.paper_trader import MarketInventory
 from src.utils.logger import get_logger, trade_logger
@@ -223,8 +223,9 @@ class RealTradingEngine:
                     if detected_balance > 0:
                         break
 
-        if detected_balance > 0:
-            self.balance_usdc = detected_balance
+        if detected_balance > 0 or self.balance_usdc > 0:
+            if detected_balance > 0:
+                self.balance_usdc = detected_balance
             try:
                 open_orders = self.client.get_open_orders()
                 if isinstance(open_orders, list):
@@ -237,9 +238,66 @@ class RealTradingEngine:
             except Exception:
                 self.free_cash = self.balance_usdc
 
-        if self.initial_balance == 0.0 and self.balance_usdc > 0:
-            self.initial_balance = self.balance_usdc
-            logger.info(f"💵 Balance Real Detectado en Polymarket: ${self.balance_usdc:.2f} USDC (Libre: ${self.free_cash:.2f} USDC)")
+        # 4. Sincronizar Posiciones Abiertas Reales desde Data API oficial de Polymarket
+        total_pos_val = 0.0
+        try:
+            import httpx
+            with httpx.Client(timeout=4.0) as http_client:
+                funder_to_query = (config.polymarket_funder_address.strip() or self.funder_address).lower()
+                resp = http_client.get(f"https://data-api.polymarket.com/positions?user={funder_to_query}")
+                if resp.status_code == 200:
+                    pos_list = resp.json()
+                    if isinstance(pos_list, list):
+                        active_conds = set()
+                        for p in pos_list:
+                            cond_id = str(p.get("conditionId", "") or "")
+                            size = float(p.get("size", 0.0) or 0.0)
+                            avg_p = float(p.get("avgPrice", 0.0) or 0.0)
+                            cur_val = float(p.get("currentValue", 0.0) or (size * avg_p))
+                            title = str(p.get("title", "") or "Mercado Cripto")
+                            token_id = str(p.get("asset", "") or "")
+                            asset = detect_market_asset(title) or "CRYPTO"
+
+                            if size >= 1.0 and cond_id:
+                                active_conds.add(cond_id)
+                                total_pos_val += cur_val
+                                if cond_id not in self.inventories:
+                                    self.inventories[cond_id] = MarketInventory(
+                                        condition_id=cond_id,
+                                        asset=asset,
+                                        question=title,
+                                        shares_held=size,
+                                        avg_buy_price=avg_p
+                                    )
+                                else:
+                                    self.inventories[cond_id].shares_held = size
+                                    self.inventories[cond_id].avg_buy_price = avg_p
+
+                                if cond_id not in self.polymarket.active_markets and token_id:
+                                    mkt = PolymarketMarket(
+                                        condition_id=cond_id,
+                                        question=title,
+                                        end_date_iso="",
+                                        yes_token_id=token_id,
+                                        no_token_id="",
+                                        asset=asset,
+                                        initial_prob=avg_p
+                                    )
+                                    self.polymarket.active_markets[cond_id] = mkt
+                                    self.polymarket.token_to_market[token_id] = mkt
+
+                        for cid in list(self.inventories.keys()):
+                            if cid not in active_conds:
+                                self.inventories[cid].shares_held = 0.0
+        except Exception as e:
+            logger.debug(f"Aviso al sincronizar posiciones abiertas: {e}")
+
+        self.total_positions_val = round(total_pos_val, 2)
+        total_equity = self.balance_usdc + self.total_positions_val
+
+        if self.initial_balance == 0.0 and total_equity > 0:
+            self.initial_balance = total_equity
+            logger.info(f"💵 Capital Total Detectado: ${total_equity:.2f} USDC (Efectivo: ${self.balance_usdc:.2f}, En Posiciones: ${self.total_positions_val:.2f} USDC)")
 
     async def execute_signal(self, opp: MarketMakingOpportunity):
         """Ejecuta órdenes límite reales en el libro del CLOB de Polymarket"""
@@ -453,7 +511,7 @@ class RealTradingEngine:
         """Retorna el listado detallado de posiciones abiertas en dinero real"""
         open_pos = []
         for cond_id, inv in self.inventories.items():
-            if inv.shares_held >= 5.0:
+            if inv.shares_held >= 1.0:
                 invested = round(inv.shares_held * inv.avg_buy_price, 2)
                 target_sell = round(inv.avg_buy_price + config.target_spread_cents, 3)
                 proj_profit = round(inv.shares_held * config.target_spread_cents, 2)
