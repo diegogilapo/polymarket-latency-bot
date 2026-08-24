@@ -127,7 +127,6 @@ class RealTradingEngine:
 
         import urllib.request
         import json
-        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
 
         candidate_addresses = list({addr.lower() for addr in [
             "0xbb9C2007dADB32d6c9c33d7CD630A929DcC5eaaf",
@@ -197,29 +196,32 @@ class RealTradingEngine:
                 if detected_balance > 0:
                     break
 
-        # 3. Consultar Contratos ERC20 de Polygon On-Chain (USDC.e / USDC / USDT)
+        # 3. Consultar Contratos ERC20 de Polygon On-Chain (Native USDC / USDC.e / USDT)
         if detected_balance == 0.0:
-            for contract in ["0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"]:
-                for addr in candidate_addresses:
-                    clean_addr = addr.lower().replace("0x", "").zfill(64)
-                    call_data = "0x70a08231" + clean_addr
-                    payload = {"jsonrpc": "2.0", "method": "eth_call", "params": [{"to": contract, "data": call_data}, "latest"], "id": 1}
-                    for rpc in ["https://polygon-rpc.com", "https://polygon.llamarpc.com", "https://rpc.ankr.com/polygon", "https://1rpc.io/matic"]:
-                        try:
-                            req = urllib.request.Request(rpc, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
-                            with urllib.request.urlopen(req, timeout=2.0) as resp:
-                                res = json.loads(resp.read())
-                                int_val = int(res.get("result", "0x0"), 16)
-                                if int_val > 0:
-                                    detected_balance = round(int_val / 1e6, 2)
-                                    logger.info(f"📊 [ON-CHAIN POLYGON] Saldo Detectado en Contrato: ${detected_balance:.2f} USDC")
-                                    break
-                        except Exception:
-                            continue
+            import httpx
+            with httpx.Client(timeout=4.0) as http_client:
+                for contract in ["0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"]:
+                    for addr in candidate_addresses:
+                        clean_addr = addr.lower().replace("0x", "").zfill(64)
+                        call_data = "0x70a08231" + clean_addr
+                        payload = {"jsonrpc": "2.0", "method": "eth_call", "params": [{"to": contract, "data": call_data}, "latest"], "id": 1}
+                        for rpc in ["https://polygon.drpc.org", "https://1rpc.io/matic", "https://polygon-bor-rpc.publicnode.com"]:
+                            try:
+                                resp = http_client.post(rpc, json=payload)
+                                if resp.status_code == 200:
+                                    res = resp.json()
+                                    hex_val = res.get("result", "0x0")
+                                    int_val = int(hex_val, 16)
+                                    if int_val > 0:
+                                        detected_balance = round(int_val / 1e6, 2)
+                                        logger.info(f"📊 [ON-CHAIN POLYGON] Saldo Detectado en Contrato ({contract[:10]}...): ${detected_balance:.2f} USDC")
+                                        break
+                            except Exception:
+                                continue
+                        if detected_balance > 0:
+                            break
                     if detected_balance > 0:
                         break
-                if detected_balance > 0:
-                    break
 
         if detected_balance > 0:
             self.balance_usdc = detected_balance
