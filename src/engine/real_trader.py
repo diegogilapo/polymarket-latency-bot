@@ -2,9 +2,15 @@ import time
 import asyncio
 from typing import Dict, List, Any, Optional
 from eth_account import Account
-from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OrderArgs, ApiCreds
-from py_clob_client.exceptions import PolyApiException
+
+try:
+    from py_clob_client_v2.client import ClobClient
+    from py_clob_client_v2.clob_types import OrderArgs, ApiCreds, AssetType, BalanceAllowanceParams
+    from py_clob_client_v2.exceptions import PolyApiException
+except ImportError:
+    from py_clob_client.client import ClobClient
+    from py_clob_client.clob_types import OrderArgs, ApiCreds, AssetType, BalanceAllowanceParams
+    from py_clob_client.exceptions import PolyApiException
 
 from src.config import config
 from src.feeds.multi_feed import MultiExchangePriceFeed
@@ -18,8 +24,8 @@ logger = get_logger("RealTrader")
 class RealTradingEngine:
     """
     Motor Institucional de Ejecución en Dinero Real (Polymarket CLOB en Polygon):
-    - Firma de órdenes EIP-712 de ultra-baja latencia.
-    - Derivación y autenticación automática de credenciales CLOB.
+    - Firma de órdenes EIP-712 de ultra-baja latencia con soporte V2 oficial.
+    - Derivación y autenticación automática de credenciales CLOB V2.
     - Control estricto de riesgo: Strict Profit Guard, tope de exposición del 35% y máx 4 mercados.
     """
     def __init__(self, price_feed: MultiExchangePriceFeed, polymarket: PolymarketFeed):
@@ -50,7 +56,7 @@ class RealTradingEngine:
             self.funder_address = account.address
             logger.info(f"🔑 Billetera Real Inicializada: {self.funder_address}")
 
-            # Resolver dirección Proxy o Safe en Polymarket vía Gamma API en Virginia
+            # Resolver dirección Proxy o Safe en Polymarket vía Gamma API
             proxy_wallet = None
             try:
                 import urllib.request
@@ -92,16 +98,19 @@ class RealTradingEngine:
                 self.client.set_api_creds(creds)
                 logger.info("🟢 Credenciales CLOB cargadas desde variables de entorno.")
             else:
-                logger.info("⏳ Derivando credenciales CLOB oficiales de Polymarket...")
-                creds = self.client.create_or_derive_api_creds()
+                logger.info("⏳ Derivando credenciales CLOB oficiales de Polymarket V2...")
+                if hasattr(self.client, "create_or_derive_api_key"):
+                    creds = self.client.create_or_derive_api_key()
+                else:
+                    creds = self.client.create_or_derive_api_creds()
                 self.client.set_api_creds(creds)
-                logger.info(f"🟢 Credenciales CLOB generadas y autenticadas con éxito (API Key: {creds.api_key[:8]}...)")
+                logger.info(f"🟢 Credenciales CLOB V2 generadas y autenticadas con éxito (API Key: {creds.api_key[:8]}...)")
 
             # Forzar sincronización de balance e indexación en el CLOB
             try:
-                from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
                 params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig_type)
-                self.client.update_balance_allowance(params=params)
+                if hasattr(self.client, "update_balance_allowance"):
+                    self.client.update_balance_allowance(params=params)
                 logger.info("🟢 Sincronización e indexación de balance activada en Polymarket CLOB.")
             except Exception as e:
                 logger.debug(f"Aviso al forzar indexación de balance: {e}")
