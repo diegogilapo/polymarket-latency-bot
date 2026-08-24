@@ -321,16 +321,28 @@ class RealTradingEngine:
                             side="BUY"
                         )
                         resp = self.client.create_and_post_order(order_args)
-                        logger.info(f"🛒 [ORDEN REAL DE COMPRA ENVIADA] ID: {resp} | {shares} sh @ ${buy_price:.3f} en [{opp.asset}]")
+                        order_id = resp.get("orderID") if isinstance(resp, dict) else str(resp)
+                        status = resp.get("status") if isinstance(resp, dict) else "live"
+                        
+                        logger.info(f"🛒 [ORDEN REAL DE COMPRA ENVIADA] ID: {order_id[:16]}... | {shares} sh @ ${buy_price:.3f} en [{opp.asset}] (Estado: {status})")
 
-                        cost = round(shares * buy_price, 2)
-                        self.balance_usdc = max(0.0, self.balance_usdc - cost)
-                        inv.avg_buy_price = buy_price
-                        inv.shares_held = shares
+                        # Si la orden se ejecutó inmediatamente (Taker)
+                        if status == "matched":
+                            cost = round(shares * buy_price, 2)
+                            self.balance_usdc = max(0.0, self.balance_usdc - cost)
+                            inv.avg_buy_price = buy_price
+                            inv.shares_held = shares
+                        
                         self.last_fill_time[f"{cond_id}_real_buy"] = now
                     except PolyApiException as e:
                         err_detail = getattr(e, "error_msg", None) or getattr(e, "message", str(e))
-                        logger.error(f"❌ Error de API CLOB al enviar compra real: {err_detail} (Código: {getattr(e, 'status_code', None)})")
+                        # Si el saldo está ocupado en órdenes activas del libro, no saturar el log
+                        if "not enough balance" in str(err_detail).lower():
+                            if now - getattr(self, "_last_balance_warn", 0.0) > 10.0:
+                                self._last_balance_warn = now
+                                logger.info(f"⏳ [CAPITAL ASIGNADO] El balance disponible (${self.balance_usdc:.2f} USDC) está trabajando en órdenes activas en el libro de Polymarket.")
+                        else:
+                            logger.error(f"❌ Error de API CLOB al enviar compra real: {err_detail} (Código: {getattr(e, 'status_code', None)})")
                     except Exception as e:
                         logger.error(f"Error inesperado al procesar orden de compra real: {e}")
 
