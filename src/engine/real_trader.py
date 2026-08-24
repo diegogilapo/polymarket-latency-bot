@@ -195,7 +195,7 @@ class RealTradingEngine:
                     clean_addr = addr.lower().replace("0x", "").zfill(64)
                     call_data = "0x70a08231" + clean_addr
                     payload = {"jsonrpc": "2.0", "method": "eth_call", "params": [{"to": contract, "data": call_data}, "latest"], "id": 1}
-                    for rpc in ["https://polygon-bor-rpc.publicnode.com", "https://1rpc.io/matic", "https://rpc.ankr.com/polygon"]:
+                    for rpc in ["https://polygon-rpc.com", "https://polygon.llamarpc.com", "https://rpc.ankr.com/polygon", "https://1rpc.io/matic"]:
                         try:
                             req = urllib.request.Request(rpc, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
                             with urllib.request.urlopen(req, timeout=2.0) as resp:
