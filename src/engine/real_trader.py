@@ -124,12 +124,16 @@ class RealTradingEngine:
         
         detected_balance = 0.0
 
-        # 1. Consultar Data API oficial de Polymarket (Múltiples endpoints oficiales)
+        # 1. Consultar Data API y Gamma API oficiales de Polymarket
         endpoints = [
             f"https://data-api.polymarket.com/value?user={target_address.lower()}",
             f"https://data-api.polymarket.com/portfolio?user={target_address.lower()}",
             f"https://data-api.polymarket.com/balances?user={target_address.lower()}",
-            f"https://data-api.polymarket.com/value?user={self.funder_address.lower()}"
+            f"https://data-api.polymarket.com/value?user={self.funder_address.lower()}",
+            f"https://gamma-api.polymarket.com/users?address={target_address.lower()}",
+            f"https://gamma-api.polymarket.com/users?address={self.funder_address.lower()}",
+            f"https://gamma-api.polymarket.com/profiles/{target_address.lower()}",
+            f"https://gamma-api.polymarket.com/profiles/{self.funder_address.lower()}"
         ]
         for url in endpoints:
             try:

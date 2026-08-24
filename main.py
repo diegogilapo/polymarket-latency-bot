@@ -100,6 +100,17 @@ class BotApp:
                 logger.error(f"Error en strategy_loop: {e}")
                 await asyncio.sleep(0.5)
 
+    async def _balance_monitor_loop(self):
+        """Bucle continuo para consultar y sincronizar el balance real con Polymarket cada 3 segundos"""
+        while self._running:
+            try:
+                if hasattr(self.trader, "update_balance"):
+                    await asyncio.to_thread(self.trader.update_balance)
+                await asyncio.sleep(3.0)
+            except Exception as e:
+                logger.debug(f"Aviso en balance_monitor_loop: {e}")
+                await asyncio.sleep(3.0)
+
     async def start(self):
         self._running = True
         console.print(
@@ -113,6 +124,7 @@ class BotApp:
             asyncio.create_task(self.price_feed.start()),
             asyncio.create_task(self.polymarket_feed.start()),
             asyncio.create_task(self._strategy_loop()),
+            asyncio.create_task(self._balance_monitor_loop()),
             asyncio.create_task(self.dashboard.start()),
             asyncio.create_task(self.web_server.start())
         ]
