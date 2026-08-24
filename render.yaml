@@ -14,9 +14,9 @@ services:
       - key: SIMULATION_INITIAL_BALANCE
         value: "1000.0"
       - key: POLYMARKET_FUNDER_ADDRESS
-        value: "0x2cfbE9d9A2D40dA2180aBf14977f1cCF9A5144F9"
+        value: "0xbb9C2007dADB32d6c9c33d7CD630A929DcC5eaaf"
       - key: POLYMARKET_SIGNATURE_TYPE
-        value: "0"
+        value: "2"
       - key: SIMULATED_NETWORK_LATENCY_MS
         value: "15"
       - key: TARGET_SPREAD_CENTS
