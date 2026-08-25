@@ -56,20 +56,22 @@ class Dashboard:
         winrate = (self.trader.wins_count / self.trader.closed_trades_count * 100) if self.trader.closed_trades_count > 0 else 100.0
         
         total_invested = getattr(self.trader, "total_positions_val", 0.0) or sum(i.shares_held * i.avg_buy_price for i in getattr(self.trader, "inventories", {}).values())
-        total_equity = self.trader.balance_usdc + total_invested
-        free_cash = getattr(self.trader, "free_cash", self.trader.balance_usdc)
+        cash_balance = self.trader.balance_usdc
+        total_equity = cash_balance + total_invested
+        free_cash = getattr(self.trader, "free_cash", cash_balance)
         in_book_orders = getattr(self.trader, "active_orders_amount", 0.0)
         open_orders_cnt = len(getattr(self.trader, "open_orders", []))
         pos_cnt = len([i for i in getattr(self.trader, "inventories", {}).values() if i.shares_held >= 1.0])
         
         wallet_box = (
             f"[bold white]🏦 Cartera Total:[/] [bold cyan]${total_equity:,.2f} USDC[/bold cyan]  │  "
-            f"[bold white]Disponible / Libre:[/] [bold green]${free_cash:,.2f} USDC[/bold green]  │  "
-            f"[bold white]En Posiciones Abiertas:[/] [bold yellow]${total_invested:,.2f} USDC ({pos_cnt} mercados)[/bold yellow]  │  "
-            f"[bold white]PnL:[/] {pnl_color}{pnl:+,.2f} USDC[/]  │  "
-            f"[bold white]WinRate:[/] [bold green]{winrate:.1f}%[/bold green]\n"
-            f"[bold white]⚡ Estrategia:[/] [bold green]Market Making Cuantitativo (Maker-Only / Cobrando Spread)[/bold green]  │  "
-            f"[bold white]Mercados Analizados:[/] [bold yellow]{len(self.polymarket.active_markets)} libros en vivo[/bold yellow]"
+            f"[bold white]Efectivo en Polymarket:[/] [bold green]${cash_balance:,.2f} USDC[/bold green]  │  "
+            f"[bold white]En Órdenes del Libro:[/] [bold yellow]${in_book_orders:,.2f} USDC ({open_orders_cnt} órdenes)[/bold yellow]  │  "
+            f"[bold white]Libre para Nuevas Órdenes:[/] [bold white]${free_cash:,.2f} USDC[/bold white]\n"
+            f"[bold white]📦 Posiciones Compradas:[/] [bold bright_yellow]${total_invested:,.2f} USDC ({pos_cnt} mercados)[/bold bright_yellow]  │  "
+            f"[bold white]PnL Realizado:[/] {pnl_color}{pnl:+,.2f} USDC[/]  │  "
+            f"[bold white]WinRate:[/] [bold green]{winrate:.1f}%[/bold green]  │  "
+            f"[bold white]⚡ Libros en Vivo:[/] [bold yellow]{len(self.polymarket.active_markets)}[/bold yellow]"
         )
         console.print(Panel(wallet_box, title="💵 ESTADO DE BILLETERA Y RENDIMIENTO", border_style="green"))
 
