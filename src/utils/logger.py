@@ -21,8 +21,10 @@ os.makedirs("data", exist_ok=True)
 
 console = Console(force_terminal=True)
 
-# Configurar logging estándar hacia archivo
-file_handler = logging.FileHandler("logs/events.log", encoding="utf-8")
+from logging.handlers import RotatingFileHandler
+
+# Configurar logging estándar hacia archivo con rotación máxima de 5MB
+file_handler = RotatingFileHandler("logs/events.log", maxBytes=5 * 1024 * 1024, backupCount=2, encoding="utf-8")
 file_handler.setLevel(logging.INFO)
 file_formatter = logging.Formatter(
     fmt="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
