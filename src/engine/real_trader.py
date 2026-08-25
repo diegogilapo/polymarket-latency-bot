@@ -1,4 +1,5 @@
 import time
+import math
 import asyncio
 from typing import Dict, List, Any, Optional
 from eth_account import Account
@@ -346,11 +347,13 @@ class RealTradingEngine:
             if sell_price >= target_min_sell:
                 if now - self.last_fill_time.get(f"{cond_id}_real_sell", 0) > 2.0:
                     try:
-                        shares_to_sell = inv.shares_held
+                        shares_to_sell = math.floor(float(inv.shares_held) * 100.0) / 100.0
+                        if shares_to_sell <= 0:
+                            continue
                         order_args = OrderArgs(
                             token_id=opp.yes_token_id,
                             price=round(sell_price, 3),
-                            size=round(shares_to_sell, 2),
+                            size=shares_to_sell,
                             side="SELL"
                         )
                         resp = self.client.create_and_post_order(order_args)
@@ -481,11 +484,13 @@ class RealTradingEngine:
             if sell_price >= target_min_sell:
                 if now - self.last_fill_time.get(f"{cond_id}_real_sell", 0) > 3.0:
                     try:
-                        shares_to_sell = inv.shares_held
+                        shares_to_sell = math.floor(float(inv.shares_held) * 100.0) / 100.0
+                        if shares_to_sell <= 0:
+                            continue
                         order_args = OrderArgs(
                             token_id=token_id,
                             price=round(sell_price, 3),
-                            size=round(shares_to_sell, 2),
+                            size=shares_to_sell,
                             side="SELL"
                         )
                         resp = self.client.create_and_post_order(order_args)
