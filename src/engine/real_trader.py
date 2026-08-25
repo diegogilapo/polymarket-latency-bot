@@ -349,7 +349,7 @@ class RealTradingEngine:
                     try:
                         shares_to_sell = math.floor(float(inv.shares_held) * 100.0) / 100.0
                         if shares_to_sell <= 0:
-                            continue
+                            return
                         order_args = OrderArgs(
                             token_id=opp.yes_token_id,
                             price=round(sell_price, 3),
