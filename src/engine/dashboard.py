@@ -55,23 +55,29 @@ class Dashboard:
         pnl_color = "[green]" if pnl >= 0 else "[red]"
         winrate = (self.trader.wins_count / self.trader.closed_trades_count * 100) if self.trader.closed_trades_count > 0 else 100.0
         
-        total_invested = getattr(self.trader, "total_positions_val", 0.0) or sum(i.shares_held * i.avg_buy_price for i in getattr(self.trader, "inventories", {}).values())
+        open_positions = self.trader.get_open_positions_summary()
+        cost_basis_total = sum(pos.get("invested_usdc", 0.0) for pos in open_positions)
+        target_sell_total = sum(pos.get("shares_held", 0.0) * pos.get("target_sell_price", 0.0) for pos in open_positions)
+        proj_profit_total = sum(pos.get("projected_profit_usdc", 0.0) for pos in open_positions)
+        
+        market_val_total = getattr(self.trader, "total_positions_val", 0.0) or cost_basis_total
         cash_balance = self.trader.balance_usdc
-        total_equity = cash_balance + total_invested
+        capital_total = round(cash_balance + cost_basis_total, 2)
+        flotante_total = round(cash_balance + market_val_total, 2)
+        projected_total = round(cash_balance + target_sell_total, 2)
+        
         free_cash = getattr(self.trader, "free_cash", cash_balance)
         in_book_orders = getattr(self.trader, "active_orders_amount", 0.0)
         open_orders_cnt = len(getattr(self.trader, "open_orders", []))
-        pos_cnt = len([i for i in getattr(self.trader, "inventories", {}).values() if i.shares_held >= 1.0])
+        pos_cnt = len(open_positions)
         
         wallet_box = (
-            f"[bold white]🏦 Cartera Total:[/] [bold cyan]${total_equity:,.2f} USDC[/bold cyan]  │  "
-            f"[bold white]Efectivo en Polymarket:[/] [bold green]${cash_balance:,.2f} USDC[/bold green]  │  "
-            f"[bold white]En Órdenes del Libro:[/] [bold yellow]${in_book_orders:,.2f} USDC ({open_orders_cnt} órdenes)[/bold yellow]  │  "
-            f"[bold white]Libre para Nuevas Órdenes:[/] [bold white]${free_cash:,.2f} USDC[/bold white]\n"
-            f"[bold white]📦 Posiciones Compradas:[/] [bold bright_yellow]${total_invested:,.2f} USDC ({pos_cnt} mercados)[/bold bright_yellow]  │  "
-            f"[bold white]PnL Realizado:[/] {pnl_color}{pnl:+,.2f} USDC[/]  │  "
-            f"[bold white]WinRate:[/] [bold green]{winrate:.1f}%[/bold green]  │  "
-            f"[bold white]⚡ Libros en Vivo:[/] [bold yellow]{len(self.polymarket.active_markets)}[/bold yellow]"
+            f"[bold white]🏦 Capital Total Real:[/] [bold cyan]${capital_total:,.2f} USDC[/bold cyan] (Efectivo: ${cash_balance:.2f} + En Posiciones: ${cost_basis_total:.2f})  │  "
+            f"[bold white]🎯 Valor al Cerrar Ventas:[/] [bold green]${projected_total:,.2f} USDC (+${proj_profit_total:.2f})[/bold green]\n"
+            f"[bold white]💵 Efectivo Libre:[/] [bold green]${free_cash:,.2f} USDC[/bold green]  │  "
+            f"[bold white]En Órdenes Compra:[/] [bold yellow]${in_book_orders:,.2f} USDC ({open_orders_cnt} órds)[/bold yellow]  │  "
+            f"[bold white]📉 Valor Flotante Polymarket:[/] [dim white]${flotante_total:,.2f} USDC[/dim white]  │  "
+            f"[bold white]WinRate:[/] [bold green]{winrate:.1f}%[/bold green]"
         )
         console.print(Panel(wallet_box, title="💵 ESTADO DE BILLETERA Y RENDIMIENTO", border_style="green"))
 
